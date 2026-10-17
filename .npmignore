@@ -1,0 +1,16 @@
+# Development-only folders
+.claude/
+.specify/
+.vscode/
+specs/
+test/
+tests/
+tmp/
+
+# Logs and environment
+*.log
+.env*
+
+# OS files
+.DS_Store
+Thumbs.db

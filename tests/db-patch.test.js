@@ -1,0 +1,165 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("fs");
+const path = require("path");
+const { Parser } = require("@dbml/core");
+const { parseSchema, generateDbPatch, writeDbPatch, writeMigration } = require("../src");
+const { writeTemp } = require("./helpers");
+
+const dbml = `Project shop {
+  database_type: 'postgres'
+  Note: 'Shop schema'
+}
+
+// accounts and who changed them
+Table accounts {
+  id integer [primary key, not null, increment]
+  created_by integer [ref: > accounts.id, delete:set null]
+  status enum('active','closed') [default: 'active']
+  bio text('long')
+  born dateonly
+  details jsonb
+}
+
+Table orders {
+  id integer [pk]
+  account_id integer [ref: > accounts.id, delete:cascade, not null, note: 'owner, required'] // who ordered
+  approved_by integer [ref: > accounts.id]
+  updated_by integer [ref: > accounts.id, update: cascade]
+
+  Note: {
+    'Orders placed by accounts'
+  }
+}
+
+Table invoices {
+  id integer [pk, ref: < payments.invoice_id, delete: restrict]
+}
+
+Table payments {
+  id integer [pk]
+  invoice_id integer
+}
+
+TableGroup billing {
+  orders
+  invoices
+}
+`;
+
+const parseStandard = (text) => new Parser().parse(text, "dbmlv2");
+
+function standardRefs(database) {
+  return database.schemas[0].refs
+    .map((ref) => {
+      const many = ref.endpoints.find((endpoint) => endpoint.relation == "*");
+      const one = ref.endpoints.find((endpoint) => endpoint.relation == "1");
+      return `${many.tableName}.${many.fieldNames[0]}->${one.tableName}.${one.fieldNames[0]}` +
+        ` delete=${ref.onDelete || ""} update=${ref.onUpdate || ""}`;
+    })
+    .sort();
+}
+
+test("the source itself is rejected by the standard parser (sanity check)", () => {
+  assert.throws(() => parseStandard(dbml));
+});
+
+test("the generated file parses with the standard DBML parser", () => {
+  assert.doesNotThrow(() => parseStandard(generateDbPatch(dbml)));
+});
+
+test("every relationship keeps its direction and actions", () => {
+  const refs = standardRefs(parseStandard(generateDbPatch(dbml)));
+
+  assert.deepEqual(refs, [
+    "accounts.created_by->accounts.id delete=set null update=",
+    "orders.account_id->accounts.id delete=cascade update=",
+    "orders.approved_by->accounts.id delete= update=",
+    "orders.updated_by->accounts.id delete= update=cascade",
+    "payments.invoice_id->invoices.id delete=restrict update=",
+  ]);
+  assert.equal(refs.length, parseSchema(dbml).relationships.length);
+});
+
+test("moved columns keep their other settings and trailing comment", () => {
+  const patch = generateDbPatch(dbml);
+
+  assert.match(patch, /^  account_id integer \[not null, note: 'owner, required'\] \/\/ who ordered$/m);
+  assert.match(patch, /^  created_by integer$/m);
+  assert.match(patch, /^  id integer \[pk\]$/m);
+  assert.match(patch, /^Ref: orders\.account_id > accounts\.id \[delete: cascade\]$/m);
+  assert.match(patch, /^Ref: invoices\.id < payments\.invoice_id \[delete: restrict\]$/m);
+});
+
+test("lines that need no rewrite are copied unchanged", () => {
+  const patch = generateDbPatch(dbml).split("\n");
+  // created_by, account_id, updated_by, the orders Note block, invoices.id
+  const changed = new Set([9, 18, 20, 22, 28]);
+
+  dbml.split("\n").forEach((line, index) => {
+    changed.has(index + 1) || assert.equal(patch[index], line, `line ${index + 1}`);
+  });
+});
+
+test("Note: { becomes Note {", () => {
+  const patch = generateDbPatch(dbml);
+  assert.match(patch, /^  Note \{$/m);
+  assert.doesNotMatch(patch, /Note: \{/);
+});
+
+test("output is deterministic", () => {
+  assert.equal(generateDbPatch(dbml), generateDbPatch(dbml));
+});
+
+test("writeDbPatch writes <base>-patch.dbml next to the source by default", () => {
+  const { dir, file } = writeTemp("db.dbml", dbml);
+  const before = fs.readFileSync(file);
+
+  const written = writeDbPatch(file);
+
+  assert.equal(written, path.join(dir, "db-patch.dbml"));
+  assert.equal(fs.readFileSync(written, "utf8"), generateDbPatch(dbml));
+  assert.deepEqual(fs.readFileSync(file), before);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["db-patch.dbml", "db.dbml"]);
+});
+
+test("writeDbPatch honours outPath and replaces an existing file", () => {
+  const { dir, file } = writeTemp("db.dbml", dbml);
+  const outPath = path.join(dir, "docs", "schema.dbml");
+  fs.mkdirSync(path.dirname(outPath));
+  fs.writeFileSync(outPath, "old content");
+
+  assert.equal(writeDbPatch(file, { outPath }), outPath);
+  assert.equal(fs.readFileSync(outPath, "utf8"), generateDbPatch(dbml));
+});
+
+test("renamed_from is removed from table headers and columns, and the patch still parses", () => {
+  const renamed = `Table people [renamed_from: 'users', headercolor: #3498DB] {
+  id integer [pk]
+  full_name text [renamed_from: 'fullname', note: 'shown']
+  nick text [renamed_from: 'nickname']
+}
+
+Table orders [renamed_from: 'purchases'] {
+  id integer [pk]
+  buyer_id integer [renamed_from: 'people_id', ref: > people.id, delete: cascade] // who
+}
+`;
+  const patch = generateDbPatch(renamed);
+
+  assert.doesNotMatch(patch, /renamed_from/);
+  assert.match(patch, /^Table people \[headercolor: #3498DB\] \{$/m);
+  assert.match(patch, /^Table orders \{$/m);
+  assert.match(patch, /^  full_name text \[note: 'shown'\]$/m);
+  assert.match(patch, /^  nick text$/m);
+  assert.match(patch, /^  buyer_id integer \/\/ who$/m);
+  assert.match(patch, /^Ref: orders\.buyer_id > people\.id \[delete: cascade\]$/m);
+  assert.doesNotThrow(() => parseStandard(patch));
+});
+
+test("writeMigration never writes db-patch.dbml", () => {
+  const { dir, file } = writeTemp("db.dbml", dbml);
+  writeMigration(file, { outDir: path.join(dir, "migrations") });
+
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["db.dbml", "migrations"]);
+});
