@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
-const { parseSchema, writeMigration, DbmlError } = require("../src");
+const { parseSchema, writeSchema, DbmlError } = require("../src");
 const { writeTemp } = require("./helpers");
 
 const dbml = `Table a {
@@ -62,10 +62,9 @@ test("every problem in the DBML is reported together, in line order", () => {
   });
 });
 
-test("writeMigration writes nothing when the DBML has errors", () => {
+test("writeSchema writes nothing when the DBML has errors", () => {
   const { dir, file } = writeTemp("db.dbml", dbml);
-  const outDir = path.join(dir, "migrations");
 
-  assert.throws(() => writeMigration(file, { outDir }), DbmlError);
-  assert.equal(fs.existsSync(outDir), false);
+  assert.throws(() => writeSchema(file), DbmlError);
+  assert.equal(fs.existsSync(path.join(dir, "db.schema.ts")), false);
 });

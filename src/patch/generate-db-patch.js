@@ -1,6 +1,6 @@
 const parseSchema = require("../parse-schema");
 
-const MOVED_REFS_COMMENT = "// Relationships moved from inline settings by dbml2sequelize";
+const MOVED_REFS_COMMENT = "// Relationships moved from inline settings by dbml2drizzle";
 
 /**
  * Generates `db-patch.dbml`: a copy of the DBML that standard DBML tooling

@@ -11,21 +11,18 @@ const convertNote = require("./converter/convert-note");
 const resolveRelationships = require("./converter/resolve-relationships");
 const parseRefLine = require("./parser/parse-ref-line");
 const { cleanNote } = convertNote;
+const { RENAMED_FROM_MESSAGE } = convertAttributes;
 
-const TABLE_SETTINGS = ["note", "headercolor", "renamed_from"];
+const TABLE_SETTINGS = ["note", "headercolor"];
 const MOVED_SETTINGS = ["ref", "delete", "update"];
-
-// Directives that only drive migrations and are left out of db-patch.dbml
-const PATCH_REMOVED_SETTINGS = ["renamed_from"];
 
 const settingsText = (settings) =>
   settings.length ? ` [${settings.map((setting) => setting.text).join(", ")}]` : "";
 
 /**
- * Patch edits for one column line that standard DBML rejects or that
- * carries a migration-only directive. An inline ref with delete:/update:
- * becomes a standalone `Ref:` line with the direction as written, and
- * `renamed_from` is dropped. The line keeps its other settings and its
+ * Patch edits for one column line that standard DBML rejects: an inline
+ * ref with delete:/update: becomes a standalone `Ref:` line with the
+ * direction as written. The line keeps its other settings and its
  * trailing comment, and gets a single replacement (see data-model.md
  * PatchEdit).
  */
@@ -33,21 +30,13 @@ function columnLineEdits(table, columnLine) {
   const { name, settings, head, trailing, line } = columnLine;
   const actions = settings.filter((setting) => setting.key == "delete" || setting.key == "update");
   const refs = settings.filter((setting) => setting.key == "ref");
-  const movesRefs = actions.length > 0 && refs.length > 0;
-  const dropsDirective = settings.some((setting) => PATCH_REMOVED_SETTINGS.includes(setting.key));
 
-  if (!movesRefs && !dropsDirective) {
+  if (actions.length == 0 || refs.length == 0) {
     return [];
   }
 
-  const removed = [...PATCH_REMOVED_SETTINGS, ...(movesRefs ? MOVED_SETTINGS : [])];
-  const kept = settings.filter((setting) => !removed.includes(setting.key));
+  const kept = settings.filter((setting) => !MOVED_SETTINGS.includes(setting.key));
   const replacement = `${head}${settingsText(kept)}${trailing}`;
-
-  if (!movesRefs) {
-    return [{ line, replacement }];
-  }
-
   const actionText = actions.map((setting) => `${setting.key}: ${setting.value}`).join(", ");
 
   return refs.map((ref, index) => {
@@ -56,25 +45,6 @@ function columnLineEdits(table, columnLine) {
     index == 0 && (edit.replacement = replacement);
     return edit;
   });
-}
-
-/**
- * Patch edit for a table header that carries `renamed_from`: the header
- * line without it.
- */
-function tableHeaderEdits(block, definition) {
-  const settings = definition.settings ? parseSettings(definition.settings) : [];
-
-  if (!settings.some((setting) => PATCH_REMOVED_SETTINGS.includes(setting.key))) {
-    return [];
-  }
-
-  const kept = settings.filter((setting) => !PATCH_REMOVED_SETTINGS.includes(setting.key));
-  const at = block.raw.indexOf(definition.settings);
-  const before = block.raw.substring(0, at).replace(/\s+$/, "");
-  const after = block.raw.substring(at + definition.settings.length);
-
-  return [{ line: block.line, replacement: `${before}${settingsText(kept)}${after}` }];
 }
 
 /**
@@ -93,17 +63,15 @@ function parseTable(block, definition, collector) {
   const name = definition.name;
   const columnLines = [];
   let comment = "";
-  let renamedFrom;
   let indexLines = [];
 
   for (const setting of definition.settings ? parseSettings(definition.settings) : []) {
-    if (!TABLE_SETTINGS.includes(setting.key)) {
+    if (setting.key == "renamed_from") {
+      collector.add({ table: name, line: block.line, message: RENAMED_FROM_MESSAGE });
+    } else if (!TABLE_SETTINGS.includes(setting.key)) {
       collector.add({ table: name, line: block.line, message: `Unknown table setting '${setting.text}'` });
     } else if (setting.key == "note") {
       comment = cleanNote(setting.value);
-    } else if (setting.key == "renamed_from") {
-      renamedFrom = cleanNote(setting.value);
-      renamedFrom || collector.add({ table: name, line: block.line, message: "renamed_from needs the previous name" });
     }
   }
 
@@ -163,12 +131,9 @@ function parseTable(block, definition, collector) {
   }
 
   return {
-    table: { name, comment, columns, indexes, line: block.line, ...(renamedFrom && { renamedFrom }) },
+    table: { name, comment, columns, indexes, line: block.line },
     rawRefs,
-    patchEdits: [
-      ...tableHeaderEdits(block, definition),
-      ...columnLines.flatMap((columnLine) => columnLineEdits(name, columnLine)),
-    ],
+    patchEdits: columnLines.flatMap((columnLine) => columnLineEdits(name, columnLine)),
   };
 }
 

@@ -1,0 +1,149 @@
+const parseSchema = require("../parse-schema");
+const { createCollector } = require("../errors");
+const { getDialect } = require("../dialects");
+const { propertyKey, member, tableExports } = require("./identifiers");
+const buildRelations = require("./relations");
+
+/**
+ * A note as a JSDoc comment, with `*\/` escaped so it cannot end the comment.
+ */
+function jsDoc(text, indent) {
+  if (!text) {
+    return [];
+  }
+
+  const lines = String(text).replace(/\*\//g, "*\\/").split(/\r?\n/);
+
+  return lines.length == 1
+    ? [`${indent}/** ${lines[0]} */`]
+    : [`${indent}/**`, ...lines.map((line) => `${indent} * ${line}`.trimEnd()), `${indent} */`];
+}
+
+const action = (value) => JSON.stringify(String(value).toLowerCase());
+
+const actionOptions = ({ onDelete, onUpdate }) =>
+  [onDelete && `onDelete: ${action(onDelete)}`, onUpdate && `onUpdate: ${action(onUpdate)}`].filter(Boolean);
+
+const sorted = (set) => [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+/**
+ * Generates the Drizzle schema source for one target dialect from DBML text.
+ * Sections come in a fixed order (header, imports, enums, tables, relations;
+ * see specs/004-drizzle-schema-generation/data-model.md), so the same DBML
+ * always gives the same output. Throws DbmlError listing every problem.
+ */
+module.exports = function generateSchema(dbmlText, opts = {}) {
+  const { dialect: dialectId = "pg", sourceName = "schema.dbml" } = opts;
+  const dialect = getDialect(dialectId);
+  const schema = parseSchema(dbmlText);
+  const collector = createCollector();
+  const ormImports = new Set();
+  const builders = new Set([dialect.tableBuilder]);
+
+  const enums = dialect.collectEnums(schema);
+  const exports = tableExports(schema.tables, collector, new Map(enums.map((e) => [e.exportName, e.dbName])));
+  enums.length && builders.add(dialect.enumBuilder);
+
+  const tableBlocks = schema.tables.map((table) => {
+    const own = exports.get(table.name);
+    const outgoing = schema.relationships.filter((relationship) => relationship.from.table == table.name);
+    const pkColumns = table.columns.filter((column) => column.primaryKey);
+    const lines = [
+      ...jsDoc(table.comment, ""),
+      `export const ${own} = ${dialect.tableBuilder}(${JSON.stringify(table.name)}, {`,
+    ];
+
+    for (const column of table.columns) {
+      const location = { table: table.name, column: column.name, line: column.line };
+      const enumDef = enums.find((e) => e.table == table.name && e.column == column.name);
+      let call;
+
+      if (enumDef) {
+        call = `${enumDef.exportName}(${JSON.stringify(column.name)})`;
+      } else {
+        const result = dialect.columnCall(column, location, collector);
+
+        if (!result) {
+          continue;
+        }
+
+        result.builders.forEach((builder) => builders.add(builder));
+        call = result.text;
+      }
+
+      if (pkColumns.length == 1 && column.primaryKey) call += ".primaryKey()";
+      if (column.allowNull === false) call += ".notNull()";
+      if (column.unique) call += ".unique()";
+
+      if (column.defaultValue) {
+        const modifier = dialect.defaultModifier(column.defaultValue);
+        modifier.usesSql && ormImports.add("sql");
+        call += modifier.text;
+      }
+
+      for (const relationship of outgoing) {
+        if (relationship.composite || relationship.from.columns[0] != column.name) {
+          continue;
+        }
+
+        const target = exports.get(relationship.to.table);
+        const options = actionOptions(relationship);
+        call += `.references(() => ${member(target, relationship.to.columns[0])}`;
+        call += options.length ? `, { ${options.join(", ")} })` : ")";
+      }
+
+      lines.push(...jsDoc(column.comment, "  "), `  ${propertyKey(column.name)}: ${call},`);
+    }
+
+    const extra = [];
+
+    if (pkColumns.length > 1) {
+      builders.add("primaryKey");
+      extra.push(`primaryKey({ columns: [${pkColumns.map((column) => member("t", column.name)).join(", ")}] })`);
+    }
+
+    for (const relationship of outgoing.filter((item) => item.composite)) {
+      const target = relationship.to.table == table.name ? "t" : exports.get(relationship.to.table);
+      const columns = relationship.from.columns.map((column) => member("t", column)).join(", ");
+      const foreignColumns = relationship.to.columns.map((column) => member(target, column)).join(", ");
+      let text = `foreignKey({ columns: [${columns}], foreignColumns: [${foreignColumns}] })`;
+
+      if (relationship.onDelete) text += `.onDelete(${action(relationship.onDelete)})`;
+      if (relationship.onUpdate) text += `.onUpdate(${action(relationship.onUpdate)})`;
+
+      builders.add("foreignKey");
+      extra.push(text);
+    }
+
+    for (const index of table.indexes) {
+      const builder = index.unique ? "uniqueIndex" : "index";
+      const columns = index.fields.map((field) => member("t", field)).join(", ");
+      const target = index.using ? `.using(${JSON.stringify(index.using.toLowerCase())}, ${columns})` : `.on(${columns})`;
+
+      builders.add(builder);
+      extra.push(`${builder}(${JSON.stringify(index.name)})${target}`);
+    }
+
+    lines.push(extra.length ? `}, (t) => [\n${extra.map((item) => `  ${item},`).join("\n")}\n]);` : "});");
+    return lines.join("\n");
+  });
+
+  const relations = buildRelations(schema, exports, collector);
+  relations.length && ormImports.add("relations");
+
+  collector.throwIfAny();
+
+  const imports = [
+    ormImports.size && `import { ${sorted(ormImports).join(", ")} } from "drizzle-orm";`,
+    `import { ${sorted(builders).join(", ")} } from ${JSON.stringify(dialect.module)};`,
+  ].filter(Boolean);
+
+  const sections = [
+    `// Generated by dbml2drizzle from ${sourceName}. Do not edit by hand.\n${imports.join("\n")}`,
+    enums.length && enums.map(dialect.enumDeclaration).join("\n"),
+    ...tableBlocks,
+    ...relations,
+  ].filter(Boolean);
+
+  return `${sections.join("\n\n")}\n`;
+};

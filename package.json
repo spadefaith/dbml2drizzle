@@ -1,15 +1,15 @@
 {
-  "name": "dbml2sequelize",
-  "version": "2.1.0",
-  "description": "Generate initial and incremental Sequelize migrations and dbdocs-ready DBML from a DBML schema",
+  "name": "dbml2drizzle",
+  "version": "3.0.0",
+  "description": "Generate Drizzle ORM schemas and dbdocs-ready DBML from a DBML schema",
   "main": "src/index.js",
   "bin": {
-    "dbml2sequelize": "bin/dbml2sequelize.js"
+    "dbml2drizzle": "bin/dbml2drizzle.js"
   },
   "author": "spadefaith",
   "repository": {
     "type": "git",
-    "url": "https://github.com/spadefaith/dbml2sequelize.git"
+    "url": "https://github.com/spadefaith/dbml2drizzle.git"
   },
   "scripts": {
     "test": "node --test"
@@ -19,12 +19,10 @@
   },
   "keywords": [],
   "license": "ISC",
-  "dependencies": {
-    "pg": "^8.13.0",
-    "sequelize": "^6.37.3",
-    "sequelize-auto": "^0.8.8"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@dbml/core": "^10.3.1"
+    "@dbml/core": "^10.3.1",
+    "drizzle-kit": "^0.31.11",
+    "drizzle-orm": "^0.45.4"
   }
 }

@@ -1,8 +1,9 @@
 /**
  * Normalizes a DBML default into one of:
- *   { kind: "fn", value: "now" }                    -> sequelize.fn("now")
- *   { kind: "literal", value: "CURRENT_TIMESTAMP" } -> sequelize.literal(...)
+ *   { kind: "fn", value: "now" }                    the current time
+ *   { kind: "literal", value: "CURRENT_TIMESTAMP" } a raw SQL expression
  *   { kind: "value", value: "active" | 1 | true | null }
+ * Each target dialect decides how to write these.
  */
 const { cleanNote } = require("./convert-note");
 
@@ -30,7 +31,7 @@ module.exports = function resolveDefault(rawDefault, type) {
     return { kind: "value", value: null };
   }
 
-  if (type.name == "BOOLEAN") {
+  if (type.name == "boolean") {
     if (/^(true|1)$/i.test(value)) return { kind: "value", value: true };
     if (/^(false|0)$/i.test(value)) return { kind: "value", value: false };
   }

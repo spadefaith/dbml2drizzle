@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.0.0
+
+The package is renamed **dbml2drizzle**. It now generates a Drizzle ORM schema from DBML, and
+drizzle-kit takes over migrations: generating, diffing and confirming renames.
+
+### Breaking
+
+- Renamed from `dbml2sequelize` to `dbml2drizzle`. The command-line tool is now `dbml2drizzle`.
+- Removed the Sequelize outputs:
+  - the `migrate`, `diff` and `baseline` commands;
+  - `generateMigration`, `writeMigration`, `generateDiffMigration`, `writeDiffMigration`,
+    `generateSnapshot` and `writeBaseline`;
+  - the snapshot file;
+  - `DataLossError`, `SnapshotError` and exit code `3`;
+  - the frozen models API (the default export).
+- Removed `renamed_from`. It is now an error, because renames are confirmed in drizzle-kit
+  generate's prompt.
+- `parseSchema` now returns canonical DBML type names (`varchar`, `timestamptz`, `date`, …)
+  instead of Sequelize data type names.
+- `sequelize`, `sequelize-auto` and `pg` are no longer dependencies. The package has no runtime
+  dependencies.
+
+### Added
+
+- `dbml2drizzle schema <file.dbml> [--out] [--dialect]`, `generateSchema` and `writeSchema`. They
+  write a deterministic `drizzle-orm/pg-core` schema with:
+  - every table, column, type, default, primary key (single and composite), unique column, index
+    and foreign key (single and composite, with actions);
+  - enums as `pgEnum`;
+  - `increment` as an identity column;
+  - notes as JSDoc comments.
+- `relations()` are generated on both sides of every DBML reference.
+- Target dialects: `pg` for now, with `dialects` listing the supported targets. Each database is
+  its own module, so MySQL and SQLite can be added later.
+
+### Changed
+
+- `timestamp` is now a timestamp without time zone, and `varchar` without a length is unbounded.
+  Both are converted as written. See "Moving from dbml2sequelize" in the README.
+
 ## 2.1.0
 
 Incremental migrations: after the initial migration, `diff` generates one migration per schema

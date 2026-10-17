@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { parseSchema, generateMigration, DbmlError } = require("../src");
+const { parseSchema, generateSchema, DbmlError } = require("../src");
 
 const inlineForms = `Table accounts {
   id integer [pk]
@@ -54,7 +54,7 @@ Ref: invoices.order_id - orders.id [update: cascade]
 `;
 
 test("standalone Ref lines and Note { } give the same migration as inline forms", () => {
-  assert.equal(generateMigration(standardForms), generateMigration(inlineForms));
+  assert.equal(generateSchema(standardForms), generateSchema(inlineForms));
 });
 
 test("standalone references are recorded as such", () => {

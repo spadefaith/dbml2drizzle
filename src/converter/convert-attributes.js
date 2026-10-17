@@ -15,8 +15,10 @@ const COLUMN_SETTINGS = [
   "ref",
   "delete",
   "update",
-  "renamed_from",
 ];
+
+const RENAMED_FROM_MESSAGE =
+  "renamed_from is no longer supported: confirm renames in drizzle-kit generate's prompt";
 
 /**
  * Parses an inline reference value such as `> accounts.id`. Returns
@@ -82,6 +84,11 @@ module.exports = function convertAttributes(table, columnLines, collector) {
     for (const setting of settings) {
       const { key, value } = setting;
 
+      if (key == "renamed_from") {
+        collector.add({ ...location, message: RENAMED_FROM_MESSAGE });
+        continue;
+      }
+
       if (!COLUMN_SETTINGS.includes(key)) {
         collector.add({ ...location, message: `Unknown column setting '${setting.text}'` });
         continue;
@@ -95,11 +102,6 @@ module.exports = function convertAttributes(table, columnLines, collector) {
       if (key == "unique") column.unique = true;
       if (key == "delete") onDelete = String(value).toUpperCase();
       if (key == "update") onUpdate = String(value).toUpperCase();
-
-      if (key == "renamed_from") {
-        column.renamedFrom = cleanNote(value);
-        column.renamedFrom || collector.add({ ...location, message: "renamed_from needs the previous name" });
-      }
 
       if (key == "default" && type) {
         column.defaultValue = resolveDefault(value, type);
@@ -134,3 +136,5 @@ module.exports = function convertAttributes(table, columnLines, collector) {
 
   return { columns, rawRefs };
 };
+
+module.exports.RENAMED_FROM_MESSAGE = RENAMED_FROM_MESSAGE;

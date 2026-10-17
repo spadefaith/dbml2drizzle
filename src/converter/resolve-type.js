@@ -1,33 +1,35 @@
 /**
- * Maps a DBML column type, e.g. varchar(100), decimal(18,2) or
- * enum('a','b'), to a Sequelize DataTypes name plus its arguments.
+ * Resolves a DBML column type, e.g. varchar(100), decimal(18,2) or
+ * enum('a','b'), to its canonical DBML name plus its arguments. Aliases are
+ * folded (int → integer, string → varchar, ...). The name stays
+ * dialect-neutral: each target dialect maps it to its own column builder.
  */
 const TYPES = {
-  varchar: "STRING",
-  string: "STRING",
-  char: "CHAR",
-  text: "TEXT",
-  integer: "INTEGER",
-  int: "INTEGER",
-  bigint: "BIGINT",
-  smallint: "SMALLINT",
-  decimal: "DECIMAL",
-  numeric: "DECIMAL",
-  float: "FLOAT",
-  double: "DOUBLE",
-  real: "REAL",
-  boolean: "BOOLEAN",
-  bool: "BOOLEAN",
-  timestamp: "DATE",
-  timestamptz: "DATE",
-  datetime: "DATE",
-  date: "DATE",
-  dateonly: "DATEONLY",
-  time: "TIME",
-  json: "JSON",
-  jsonb: "JSONB",
-  uuid: "UUID",
-  enum: "ENUM",
+  varchar: "varchar",
+  string: "varchar",
+  char: "char",
+  text: "text",
+  integer: "integer",
+  int: "integer",
+  bigint: "bigint",
+  smallint: "smallint",
+  decimal: "decimal",
+  numeric: "decimal",
+  float: "float",
+  double: "double",
+  real: "real",
+  boolean: "boolean",
+  bool: "boolean",
+  timestamp: "timestamp",
+  datetime: "timestamp",
+  timestamptz: "timestamptz",
+  date: "date",
+  dateonly: "date",
+  time: "time",
+  json: "json",
+  jsonb: "jsonb",
+  uuid: "uuid",
+  enum: "enum",
 };
 
 function splitArgs(argsText) {
@@ -81,12 +83,12 @@ module.exports = function resolveType(rawType, location, collector) {
 
   const args = match[2] != undefined ? splitArgs(match[2]) : [];
 
-  if (name == "ENUM" && args.length == 0) {
+  if (name == "enum" && args.length == 0) {
     collector.add({ ...location, message: "enum must have at least one value" });
     return null;
   }
 
-  if (name == "TEXT" && args.some((arg) => !TEXT_SIZES.includes(String(arg).toLowerCase()))) {
+  if (name == "text" && args.some((arg) => !TEXT_SIZES.includes(String(arg).toLowerCase()))) {
     collector.add({ ...location, message: "text accepts only tiny, medium or long" });
     return null;
   }

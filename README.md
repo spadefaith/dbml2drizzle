@@ -1,439 +1,121 @@
-# dbml2sequelize
+# dbml2drizzle
 
-Generate [Sequelize](https://sequelize.org/) migrations from a [DBML](https://www.dbml.org/) schema — the initial migration, then one migration per change as the schema evolves — and a copy of that schema that [dbdocs](https://dbdocs.io/) and other standard DBML tools accept.
+Generate a [Drizzle ORM](https://orm.drizzle.team/) schema from a [DBML](https://www.dbml.org/) schema, plus a copy of that DBML that [dbdocs](https://dbdocs.io/) and other standard DBML tools accept.
+
+You keep the database design in `db.dbml`. This package turns it into a `schema.ts` file, and [drizzle-kit](https://orm.drizzle.team/docs/kit-overview) compares that file with its last snapshot to write each migration.
 
 ```text
-                 ┌──────────────────────────────┐
-                 │  db.dbml  (source of truth)  │
-                 └──────────────┬───────────────┘
-                                │  one parser
-            ┌───────────────────┼────────────────────┬─────────────────┐
-            ▼                   ▼                    ▼                 ▼
-  migrations/<ts>-init-schema.js   migrations/<ts>-schema-update.js   db-patch.dbml     in-memory models
-  (dbml2sequelize migrate)         (dbml2sequelize diff, against      (dbml2sequelize   (frozen 1.x API)
-                                    the snapshot)                       patch → dbdocs)
+            ┌──────────────────────────────┐
+            │  db.dbml  (source of truth)  │
+            └──────────────┬───────────────┘
+                           │  one parser
+              ┌────────────┴─────────────┐
+              ▼                          ▼
+      db.schema.ts                 db-patch.dbml
+  (dbml2drizzle schema)        (dbml2drizzle patch → dbdocs)
+              │
+              ▼
+   drizzle-kit generate  →  migrations
 ```
+
+> **Upgrading from dbml2sequelize?** Version 3.0.0 is a breaking change. The package was renamed and the Sequelize migrations and models API were removed. See [Moving from dbml2sequelize](#moving-from-dbml2sequelize) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Table of Contents
 
 - [Installation](#installation)
 - [Quick start](#quick-start)
-- [Workflow guide](#workflow-guide)
 - [Command line](#command-line)
 - [JavaScript API](#javascript-api)
 - [DBML reference](#dbml-reference)
-  - [Tables](#tables)
-  - [Column types](#column-types)
-  - [Column settings](#column-settings)
-  - [Default values](#default-values)
-  - [Enums](#enums)
-  - [Notes and comments](#notes-and-comments)
-  - [Relationships (foreign keys)](#relationships-foreign-keys)
-  - [Indexes and primary keys](#indexes-and-primary-keys)
-  - [Project, TableGroup and line comments](#project-tablegroup-and-line-comments)
-- [The generated migration](#the-generated-migration)
-- [Incremental migrations](#incremental-migrations)
-  - [The snapshot](#the-snapshot)
-  - [What `diff` generates](#what-diff-generates)
-  - [Renames](#renames)
-  - [Changes that can lose data](#changes-that-can-lose-data)
-  - [Changes Sequelize cannot express](#changes-sequelize-cannot-express)
-  - [Derived names](#derived-names)
+- [The generated schema](#the-generated-schema)
+- [Relations](#relations)
+- [Renaming a table or column](#renaming-a-table-or-column)
+- [Moving from dbml2sequelize](#moving-from-dbml2sequelize)
+- [Target databases](#target-databases)
 - [Errors](#errors)
 - [Converted as written](#converted-as-written)
 - [Documentation with dbdocs](#documentation-with-dbdocs)
-- [Models API (frozen)](#models-api-frozen)
-- [Limitations and FAQ](#limitations-and-faq)
 - [Contributing to this package](#contributing-to-this-package)
-- [License](#license)
 
 ## Installation
 
 ```bash
-npm install --save-dev dbml2sequelize
+npm install --save-dev dbml2drizzle
+npm install drizzle-orm && npm install --save-dev drizzle-kit
 ```
 
-Requires Node.js 20 or later. The generated migrations need `sequelize` and a migration runner such as [`sequelize-cli`](https://github.com/sequelize/cli) or [Umzug](https://github.com/sequelize/umzug) in your project.
+The package needs Node.js 20 or later and has no runtime dependencies. The generated schema targets drizzle-orm 0.45.x and drizzle-kit 0.31.x.
 
 ## Quick start
 
-1. Describe your schema in `db/db.dbml`:
-
-   ```dbml
-   Table accounts {
-     id integer [pk, increment]
-     email varchar(100) [unique, not null]
-     status enum('active', 'suspended', 'closed') [not null, default: 'active']
-     created_dt timestamp [default: `now()`]
-   }
-
-   Table orders {
-     id integer [pk, increment]
-     account_id integer [ref: > accounts.id, delete: cascade, not null]
-     total decimal(18,2) [not null]
-   }
-   ```
-
-2. Generate the initial migration:
-
-   ```bash
-   npx dbml2sequelize migrate db/db.dbml --out migrations
-   # migrations/20261017080509-init-schema.js
-   # (also writes migrations/dbml2sequelize-snapshot.json)
-   ```
-
-3. Apply it:
-
-   ```bash
-   npx sequelize-cli db:migrate
-   ```
-
-4. Later, edit `db/db.dbml` and generate a migration with only the changes:
-
-   ```bash
-   npx dbml2sequelize diff db/db.dbml --out migrations
-   # migrations/20261020093000-schema-update.js
-   npx sequelize-cli db:migrate
-   ```
-
-5. Optionally, publish documentation:
-
-   ```bash
-   npx dbml2sequelize patch db/db.dbml       # → db/db-patch.dbml
-   npx dbdocs build ./db/db-patch.dbml
-   ```
-
-Commit `migrations/dbml2sequelize-snapshot.json` together with the migrations: it is how `diff` knows what the existing migrations already created. Projects that already have migrations start with `baseline` (see [Incremental migrations](#incremental-migrations)).
-
-## Workflow guide
-
-### Suggested project layout
-
-```text
-db/
-  db.dbml                          # the schema you edit
-  db-patch.dbml                    # generated by `patch`, for dbdocs (optional)
-migrations/
-  20261017080509-init-schema.js    # generated by `migrate`
-  20261020093000-schema-update.js  # generated by `diff`, one per change
-  dbml2sequelize-snapshot.json     # generated; commit it, never edit it
+```bash
+npx dbml2drizzle schema db/db.dbml --out src/db/schema.ts
 ```
 
-Add scripts to your `package.json` so everyone runs the same commands:
+```ts
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
 
-```json
-{
-  "scripts": {
-    "db:diff": "dbml2sequelize diff db/db.dbml --out migrations",
-    "db:migrate": "sequelize-cli db:migrate",
-    "db:docs": "dbml2sequelize patch db/db.dbml && dbdocs build ./db/db-patch.dbml"
-  }
-}
+export default defineConfig({
+  dialect: "postgresql",
+  schema: "./src/db/schema.ts",
+  out: "./drizzle",
+});
 ```
-
-### Starting a new project
-
-1. Write `db/db.dbml`.
-2. `npx dbml2sequelize migrate db/db.dbml --out migrations` — writes the initial migration and the snapshot.
-3. `npx sequelize-cli db:migrate`.
-4. Commit `db/db.dbml`, the migration and the snapshot together.
-
-Run `migrate` only once per project. After that, every change goes through `diff`.
-
-### Adopting it in an existing project
-
-If your database already exists (migrations written by hand, or generated before 2.1.0):
-
-1. Write or update `db/db.dbml` so it describes the database **exactly** as it is now.
-2. `npx dbml2sequelize baseline db/db.dbml --out migrations` — records the snapshot, writes no migration.
-3. Check it: `npx dbml2sequelize diff db/db.dbml --out migrations` must print `No changes.`
-4. Commit the snapshot. From now on, use `diff`.
-
-### Making a schema change
-
-1. Edit `db/db.dbml` (add a table, a column, an index, change a type or a delete action…).
-2. `npx dbml2sequelize diff db/db.dbml --out migrations` — writes one migration with only the changes and updates the snapshot.
-3. Read the migration, then `npx sequelize-cli db:migrate`. To roll it back: `npx sequelize-cli db:migrate:undo`.
-4. Commit `db.dbml`, the new migration and the snapshot in the same commit.
-
-Make one `diff` per logical change. If you need to move or convert data (fill a new `not null` column, split a column), add that code to the generated migration before applying it.
-
-### Renaming a table or column
-
-Rename it in `db.dbml` and add the old name, so the data is kept instead of dropped:
-
-```dbml
-Table people [renamed_from: 'users'] {
-  full_name varchar(100) [renamed_from: 'fullname']
-}
-```
-
-You can leave `renamed_from` in place afterwards; it is ignored once the snapshot has the new name. See [Renames](#renames).
-
-### When `diff` refuses
-
-| Exit | Output starts with | What to do |
-|---|---|---|
-| `3` | `Refused: these changes can lose data` | Check each listed change. If a removal was really a rename, add `renamed_from`. If the loss is intended, run again with `--allow-data-loss`. |
-| `1` | `… is not supported by Sequelize migrations` | Undo that edit, run `diff` for the rest, redo the edit, write its migration by hand, then run `baseline`. |
-| `1` | `line <n>: …` | A problem in `db.dbml`; fix it and run again. |
-| `2` | `… not found. Run "dbml2sequelize baseline …"` | No snapshot yet; see [Adopting it in an existing project](#adopting-it-in-an-existing-project). |
-
-Nothing is written in any of these cases, so you can simply fix and re-run.
-
-### Working in a team
-
-- Treat the snapshot like a lock file: commit it with every generated migration, and review it in pull requests.
-- If two branches both change the schema, merge `db.dbml` and both branches' migrations, apply them, then run `baseline` on the merged `db.dbml` and check that `diff` prints `No changes.`
-- Never run `baseline` with unapplied edits in `db.dbml`: they would be recorded without a migration. Run `diff` first.
-
-### Checking in CI
-
-`diff` exits `0` with `No changes.` when `db.dbml` and the snapshot agree, so CI can catch a schema edit that was committed without its migration:
 
 ```bash
-out=$(npx dbml2sequelize diff db/db.dbml --out "$(mktemp -d)" --snapshot migrations/dbml2sequelize-snapshot.json)
-test "$out" = "No changes." || { echo "db.dbml changed without a migration: run npm run db:diff"; exit 1; }
+npx drizzle-kit generate     # writes a migration with the changes since the last one
+npx drizzle-kit migrate      # applies it
 ```
 
-> Note: this writes into a temporary folder, but `--snapshot` still points at the real snapshot, which `diff` replaces when it finds changes. Run it on a CI checkout, not on your working copy.
+After each change to `db.dbml`, run `dbml2drizzle schema` again, then `drizzle-kit generate`. Review the generated SQL before applying it.
 
 ## Command line
 
-### `migrate`
-
 ```text
-dbml2sequelize migrate <file.dbml> [--out <dir>] [--name <name>] [--snapshot <file>] [--overwrite-snapshot]
+dbml2drizzle schema <file.dbml> [--out <file.ts>] [--dialect <target>]
+dbml2drizzle patch <file.dbml> [--out <file>]
+dbml2drizzle --help
 ```
 
-| Option | Default | Description |
+| Command | Writes | Default output |
 |---|---|---|
-| `<file.dbml>` | required | The DBML schema. |
-| `--out <dir>` | `migrations` | Output folder. Created if it does not exist. |
-| `--name <name>` | `init-schema` | Descriptive part of the file name. |
-| `--snapshot <file>` | `<dir>/dbml2sequelize-snapshot.json` | Where to write the [snapshot](#the-snapshot). |
-| `--overwrite-snapshot` | off | Replace an existing snapshot. |
+| `schema` | The Drizzle schema for the target (`--dialect`, default `pg`) | `<dir>/<name>.schema.ts` (`db.dbml` → `db.schema.ts`) |
+| `patch` | A dbdocs-ready copy of the DBML | `<dir>/<name>-patch.dbml` |
 
-Writes `<dir>/<YYYYMMDDHHmmss>-<name>.js` (timestamp in UTC), then the snapshot, and prints the migration's path. Never writes `db-patch.dbml`.
-
-If the snapshot already exists, `migrate` writes nothing and exits `2`:
-
-```text
-migrations/dbml2sequelize-snapshot.json already exists. Use "dbml2sequelize diff" for schema changes, or pass --overwrite-snapshot to start over.
-```
-
-Re-running `migrate` on a project that already uses `diff` is almost always a mistake: replacing the snapshot would fold any pending `db.dbml` changes into it, and they would never get a migration. Pass `--overwrite-snapshot` only when you really start over (for example, a fresh database).
-
-### `diff`
-
-```text
-dbml2sequelize diff <file.dbml> [--out <dir>] [--name <name>] [--snapshot <file>] [--allow-data-loss]
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `<file.dbml>` | required | The current DBML schema. Never modified. |
-| `--out <dir>` | `migrations` | Output folder. Created if it does not exist. |
-| `--name <name>` | `schema-update` | Descriptive part of the file name. |
-| `--snapshot <file>` | `<dir>/dbml2sequelize-snapshot.json` | The snapshot to compare against and replace. |
-| `--allow-data-loss` | off | Generate [changes that can lose data](#changes-that-can-lose-data) instead of refusing. |
-
-Compares the DBML with the snapshot, writes `<dir>/<YYYYMMDDHHmmss>-<name>.js` with only the differences, replaces the snapshot, and prints the migration's path. When nothing changed it prints `No changes.` and writes nothing. See [Incremental migrations](#incremental-migrations).
-
-### `baseline`
-
-```text
-dbml2sequelize baseline <file.dbml> [--out <dir>] [--snapshot <file>]
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `<file.dbml>` | required | The DBML schema. |
-| `--out <dir>` | `migrations` | Folder of the default snapshot path. |
-| `--snapshot <file>` | `<dir>/dbml2sequelize-snapshot.json` | Snapshot to write. Replaced if it exists. |
-
-Records the DBML as the snapshot without writing a migration, and prints the snapshot's path. Use it once in a project whose database already matches `db.dbml` (for example, migrations generated before 2.1.0), or after applying a change by hand.
-
-> `baseline` records **everything** in `db.dbml`. Any change you made since the last `diff` is folded into the snapshot without a migration. Run `diff` first.
-
-### `patch`
-
-```text
-dbml2sequelize patch <file.dbml> [--out <file>]
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `<file.dbml>` | required | The DBML schema. Never modified. |
-| `--out <file>` | `<dir of file>/<name>-patch.dbml` | Output file (`db/db.dbml` → `db/db-patch.dbml`). Replaced if it exists; its folder is created if needed. |
-
-Writes the dbdocs-ready copy and prints its path. Never writes a migration.
+- On success, the written path is printed.
+- An existing output file is replaced.
+- The source DBML is never written to, and the output path must differ from it.
 
 ### Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | Success. The written path is printed to stdout, or `No changes.` for a `diff` with nothing to do. |
-| `1` | The DBML has problems, or `diff` found [changes Sequelize cannot express](#changes-sequelize-cannot-express). Every problem is printed to stderr, one per line, and nothing is written. |
-| `2` | Usage error (unknown command, missing file argument), file-system error (file not found, folder not writable), or snapshot problem (missing, invalid, written by a newer version, or already existing for `migrate`). Nothing is written. |
-| `3` | `diff` refused [changes that can lose data](#changes-that-can-lose-data); pass `--allow-data-loss` to generate them. Nothing is written. |
-
-`dbml2sequelize --help` prints the usage.
-
-Example of exit code `1`:
-
-```text
-$ npx dbml2sequelize migrate db.dbml
-line 3: a.amount: Unsupported data type 'money'
-line 4: a.kind: enum must have at least one value
-line 5: a.owner_id: References unknown table 'owners'
-```
+| `0` | Success. |
+| `1` | The DBML has errors, which are listed on stderr one per line. Nothing is written. |
+| `2` | Usage problem: unknown command, missing file, unknown option or unsupported `--dialect`. |
 
 ## JavaScript API
 
 ```js
-const {
-  writeMigration,
-  generateMigration,
-  writeDiffMigration,
-  generateDiffMigration,
-  writeBaseline,
-  generateSnapshot,
-  writeDbPatch,
-  generateDbPatch,
-  parseSchema,
-  DbmlError,
-  DataLossError,
-  SnapshotError,
-} = require("dbml2sequelize");
+const { generateSchema, writeSchema, generateDbPatch, writeDbPatch, parseSchema, dialects, DbmlError } = require("dbml2drizzle");
 ```
 
-All functions are synchronous. When the DBML has problems they throw a `DbmlError` **before** writing anything.
+| Function | Returns |
+|---|---|
+| `generateSchema(dbmlText, { dialect = "pg", sourceName = "schema.dbml" })` | The schema source as a string. The same input always gives the same output. |
+| `writeSchema(dbmlPath, { dialect = "pg", outPath })` | The written path. Nothing is written when the DBML has errors. |
+| `generateDbPatch(dbmlText)` | The dbdocs-ready DBML as a string. |
+| `writeDbPatch(dbmlPath, { outPath })` | The written path. |
+| `parseSchema(dbmlText)` | The parsed, dialect-neutral schema description (`{ tables, relationships, patchEdits }`). |
+| `dialects` | The supported targets: `["pg"]`. |
+| `DbmlError` | Thrown for DBML problems. `error.errors` is `[{ line, table, column, message }]`. |
 
-### `writeMigration(dbmlPath, options?) → string`
-
-Reads `dbmlPath`, writes the migration and the snapshot, and returns the migration's path.
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `outDir` | string | `"migrations"` | Output folder, created if needed. |
-| `name` | string | `"init-schema"` | Descriptive part of the file name. |
-| `date` | Date | `new Date()` | Timestamp used in the file name (UTC). |
-| `snapshotPath` | string | `<outDir>/dbml2sequelize-snapshot.json` | Snapshot to write. |
-| `overwriteSnapshot` | boolean | `false` | Replace an existing snapshot instead of throwing `SnapshotError` (`reason: "exists"`). |
-
-### `writeDiffMigration(dbmlPath, options?) → string | null`
-
-Compares `dbmlPath` with the snapshot. When they differ, writes `<outDir>/<YYYYMMDDHHmmss>-<name>.js`, replaces the snapshot and returns the migration's path; returns `null` (writing nothing) when there are no changes. If the snapshot cannot be written, the migration just written is removed again.
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `outDir` | string | `"migrations"` | Output folder, created if needed. |
-| `name` | string | `"schema-update"` | Descriptive part of the file name. |
-| `snapshotPath` | string | `<outDir>/dbml2sequelize-snapshot.json` | Snapshot to read and replace. |
-| `allowDataLoss` | boolean | `false` | Generate data-loss changes instead of throwing `DataLossError`. |
-| `date` | Date | `new Date()` | Timestamp used in the file name (UTC). |
-
-### `generateDiffMigration(snapshotText, dbmlText, options?) → { code, snapshot, changes }`
-
-Returns the incremental migration source and the new snapshot content without writing anything (`code` and `snapshot` are `null` when there are no changes), plus the list of changes. Options: `source` and `snapshotSource` (file names for the header) and `allowDataLoss`.
-
-### `writeBaseline(dbmlPath, options?) → string`
-
-Writes the snapshot of `dbmlPath` (replacing an existing one) and returns its path. Options: `outDir` (default `"migrations"`) and `snapshotPath`.
-
-### `generateSnapshot(dbmlText, options?) → string`
-
-Returns the snapshot content. Option: `source` (stored in the file).
-
-### `generateMigration(dbmlText, options?) → string`
-
-Returns the migration source without writing it.
-
-| Option | Type | Description |
-|---|---|---|
-| `source` | string | File name shown in the generated header comment, e.g. `"db.dbml"`. |
-
-### `writeDbPatch(dbmlPath, options?) → string`
-
-Writes the dbdocs-ready copy and returns its path.
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `outPath` | string | `<dir>/<name>-patch.dbml` | Output file. Must differ from `dbmlPath`. |
-
-### `generateDbPatch(dbmlText) → string`
-
-Returns the dbdocs-ready copy without writing it.
-
-### `parseSchema(dbmlText) → Schema`
-
-Returns the parsed schema as plain data, the same description every output is built from:
-
-```js
-{
-  tables: [
-    {
-      name: "orders",
-      comment: "Orders placed by accounts",
-      line: 7,
-      columns: [
-        { name: "id", type: { name: "INTEGER", args: [] }, primaryKey: true, autoIncrement: true, line: 8 },
-        { name: "priority", type: { name: "ENUM", args: ["low", "normal", "high"] }, line: 10 },
-        // ...
-      ],
-      indexes: [{ fields: ["account_id", "priority"], name: "orders_by_priority" }],
-    },
-  ],
-  relationships: [
-    {
-      from: { table: "orders", columns: ["account_id"] }, // the column(s) holding the key
-      to: { table: "accounts", columns: ["id"] },
-      kind: "many-to-one",                               // or "one-to-one"
-      composite: false,
-      onDelete: "CASCADE",
-      declaredAt: [{ line: 9, form: "inline" }],         // or "standalone"
-    },
-  ],
-  patchEdits: [/* line replacements used by generateDbPatch */],
-}
-```
-
-### `DbmlError`
-
-```js
-try {
-  writeMigration("db/db.dbml");
-} catch (error) {
-  if (error instanceof DbmlError) {
-    console.error(error.message);  // one line per problem
-    console.table(error.errors);   // [{ message, table, column, line }, ...] in line order
-  } else {
-    throw error;                   // e.g. file not found
-  }
-}
-```
-
-### `DataLossError` and `SnapshotError`
-
-```js
-try {
-  writeDiffMigration("db/db.dbml");
-} catch (error) {
-  if (error instanceof DataLossError) {
-    console.error(error.message);  // "Refused: …" and one line per change
-    console.table(error.changes);  // [{ table, column?, message }, ...]
-  } else if (error instanceof SnapshotError) {
-    console.error(error.reason);   // "missing" | "invalid" | "unsupported" | "exists"
-  } else {
-    throw error;
-  }
-}
-```
+An unsupported dialect throws `Error("Unsupported dialect '<id>'. Supported: pg")`.
 
 ## DBML reference
 
-This section lists everything the generator understands. Anything else is reported as an error — the generator never silently skips part of your schema.
+This section lists everything the generator understands. Anything else is reported as an error, so no part of your schema is ever skipped silently.
 
 ### Tables
 
@@ -449,703 +131,350 @@ Table "order items" as OI [headercolor: #3498DB, note: 'Line items'] {
 
 - Table and column names may be quoted (`"order items"`); the quotes are removed.
 - An alias (`as OI`) is accepted and ignored.
-- Table settings: `note: '...'` becomes the table comment; `headercolor` is accepted and ignored (it only affects diagrams); `renamed_from: '<old name>'` declares a rename for `diff` (see [Renames](#renames)). Any other table setting is an error.
+- Table settings:
+  - `note: '...'` becomes the table's [note](#notes);
+  - `headercolor` is accepted and ignored.
+
+  Any other table setting is an error.
 - Every table needs at least one column. Duplicate table or column names are errors.
 
-### Column types
+### Column types (PostgreSQL)
 
-Each DBML type maps to a Sequelize data type. Type names are case-insensitive, and arguments are passed to Sequelize unchanged.
+Type names are case-insensitive. Each type maps to a `drizzle-orm/pg-core` column builder, and the database column name is always passed explicitly.
 
-| DBML | Sequelize | Notes |
+| DBML | Generated | Notes |
 |---|---|---|
-| `varchar`, `varchar(n)`, `string` | `STRING`, `STRING(n)` | |
-| `char(n)` | `CHAR(n)` | |
-| `text` | `TEXT` | |
-| `text('tiny')`, `text('medium')`, `text('long')` | `TEXT('tiny')` … | The size only matters on MySQL/MariaDB; PostgreSQL uses plain `TEXT`. Any other argument is an error. |
-| `integer`, `int` | `INTEGER` | |
-| `bigint` | `BIGINT` | |
-| `smallint` | `SMALLINT` | |
-| `decimal`, `decimal(p, s)`, `numeric(p, s)` | `DECIMAL`, `DECIMAL(p, s)` | |
-| `float` / `double` / `real` | `FLOAT` / `DOUBLE` / `REAL` | |
-| `boolean`, `bool` | `BOOLEAN` | |
-| `timestamp`, `timestamptz`, `datetime`, `date` | `DATE` | Sequelize's `DATE` is a timestamp **with time zone** on PostgreSQL. |
-| `timestamp(6)` | `DATE(6)` | Precision is kept. |
-| `dateonly` | `DATEONLY` | A calendar date without time. |
-| `time`, `time(6)` | `TIME`, `TIME(6)` | |
-| `json` | `JSON` | |
-| `jsonb` | `JSONB` | |
-| `uuid` | `UUID` | |
-| `enum('a', 'b', …)` | `ENUM('a', 'b', …)` | See [Enums](#enums). |
+| `varchar(n)`, `string(n)` | `varchar("c", { length: n })` | |
+| `varchar`, `string` | `varchar("c")` | No length: an unbounded `varchar`. |
+| `char(n)` | `char("c", { length: n })` | |
+| `text`, `text('tiny' \| 'medium' \| 'long')` | `text("c")` | PostgreSQL has one text type. Any other argument is an error. |
+| `integer`, `int` | `integer("c")` | |
+| `smallint` | `smallint("c")` | |
+| `bigint` | `bigint("c", { mode: "number" })` | |
+| `decimal(p, s)`, `numeric(p, s)` | `numeric("c", { precision: p, scale: s })` | |
+| `float`, `double` | `doublePrecision("c")` | |
+| `real` | `real("c")` | |
+| `boolean`, `bool` | `boolean("c")` | |
+| `timestamp`, `datetime` | `timestamp("c")` | Without time zone. |
+| `timestamptz` | `timestamp("c", { withTimezone: true })` | |
+| `date`, `dateonly` | `date("c")` | |
+| `time` | `time("c")` | |
+| `json` / `jsonb` | `json("c")` / `jsonb("c")` | |
+| `uuid` | `uuid("c")` | |
+| `enum('a', 'b', …)` | a `pgEnum` | See [Enums](#enums). |
 
-Any other type (for example `money`, `integer[]`, `double precision`) is an error: `Unsupported data type '<type>'`.
+Any other type (for example `money`, `integer[]` or `double precision`) is an error: `Unsupported data type '<type>'`.
 
 ### Column settings
-
-Settings go in square brackets after the type, separated by commas:
 
 ```dbml
 email varchar(100) [unique, not null, note: 'login, never shared']
 ```
 
-| Setting | Generated attribute |
+| Setting | Generated |
 |---|---|
-| `pk` or `primary key` | `primaryKey: true` |
-| `increment` | `autoIncrement: true` |
-| `not null` | `allowNull: false` |
-| `null` | `allowNull: true` |
-| *(neither)* | `allowNull` is omitted, so the database default applies |
-| `unique` | `unique: true` |
-| `default: …` | `defaultValue: …` — see [Default values](#default-values) |
-| `note: '…'` | `comment: "…"` — see [Notes and comments](#notes-and-comments) |
-| `ref: > table.column` (also `<`, `-`) | `references` — see [Relationships](#relationships-foreign-keys) |
-| `delete: <action>` | `onDelete` of the column's `ref` |
-| `update: <action>` | `onUpdate` of the column's `ref` |
-| `renamed_from: '<old name>'` | Nothing in the initial migration; `diff` renames the column with `queryInterface.renameColumn` — see [Renames](#renames) |
+| `pk` or `primary key` | `.primaryKey()` |
+| `increment` | `.generatedByDefaultAsIdentity()`. Only on `integer`, `bigint` or `smallint`; any other type is an error. |
+| `not null` | `.notNull()` |
+| `null`, or neither | nothing; the column is nullable |
+| `unique` | `.unique()` |
+| `default: …` | see [Default values](#default-values) |
+| `note: '…'` | a JSDoc comment; see [Notes](#notes) |
+| `ref: > table.column` (also `<`, `-`) | `.references(…)`; see [Relationships](#relationships-foreign-keys) |
+| `delete: <action>` / `update: <action>` | `onDelete` / `onUpdate` of the column's `ref` |
 
-Commas, colons, brackets, braces and `//` inside quoted values are plain text: `note: 'ratio: 1:2, see https://x.io'` is kept exactly. Use `\'` for a quote inside a quoted value.
-
-Any other setting is an error: `Unknown column setting '<setting>'`.
+Commas, colons, brackets, braces and `//` inside quoted values are plain text. Use `\'` for a quote inside a quoted value. Any other setting is an error: `Unknown column setting '<setting>'`.
 
 ### Default values
 
-| DBML | Generated `defaultValue` |
+| DBML | Generated |
 |---|---|
-| `default: 'active'` | `"active"` (quotes removed) |
-| `default: "active"` | `"active"` |
-| `default: 42`, `default: -1.5` | `42`, `-1.5` |
-| `default: 1` / `default: 0` on a `boolean` | `true` / `false` |
-| `default: true` / `default: false` | `true` / `false` |
-| `default: null` | `null` |
-| `` default: `now()` `` or `default: now()` | `Sequelize.fn("now")` |
-| `` default: `CURRENT_TIMESTAMP` `` or `default: CURRENT_TIMESTAMP` (also `CURRENT_DATE`, `CURRENT_TIME`) | `Sequelize.literal("CURRENT_TIMESTAMP")` |
-| `` default: `lower('X')` `` (any backtick expression) | `Sequelize.literal("lower('X')")` |
+| `default: 'active'` | `.default("active")` |
+| `default: 42`, `default: -1.5` | `.default(42)`, `.default(-1.5)` |
+| `default: true`, or `1` / `0` on a `boolean` | `.default(true)` / `.default(false)` |
+| `default: null` | `.default(null)` |
+| `` default: `now()` `` | `.defaultNow()` |
+| `` default: `CURRENT_TIMESTAMP` `` or any other backtick expression | ``.default(sql`CURRENT_TIMESTAMP`)``, which imports `sql` from `drizzle-orm` |
 
 ### Enums
 
-Enums are written inline as a column type and become a Sequelize `ENUM`.
-
-#### Syntax
-
 ```dbml
 Table accounts {
-  id integer [pk, increment]
-  status enum('active', 'suspended', 'closed') [not null, default: 'active', note: 'account lifecycle']
-}
-
-Table orders {
-  id integer [pk, increment]
-  priority enum('low', 'normal', 'high')
+  status enum('active', 'closed') [default: 'active']
 }
 ```
 
-- List the allowed values in parentheses, each in single (or double) quotes. Always quote values; unquoted numbers would become numbers rather than strings.
-- Values may contain spaces and commas: `enum('in progress', 'done, archived')` has exactly two values.
-- The order of the values is kept.
-- At least one value is required: `enum()` is an error (`enum must have at least one value`).
-- Enum columns accept the usual settings: `not null`, `unique`, `default`, `note`, and can be used in indexes.
+Each enum column gets its own PostgreSQL enum type, named `enum_<table>_<column>`. It is declared once, before the tables:
 
-#### Generated migration
+```ts
+export const enum_accounts_status = pgEnum("enum_accounts_status", ["active", "closed"]);
 
-```js
-status: {
-  type: Sequelize.ENUM("active", "suspended", "closed"),
-  allowNull: false,
-  defaultValue: "active",
-  comment: "account lifecycle",
-},
+export const accounts = pgTable("accounts", {
+  status: enum_accounts_status("status").default("active"),
+});
 ```
 
-#### PostgreSQL enum types
+Standalone `Enum { }` blocks are not supported. Use the inline `enum(...)` type.
 
-On PostgreSQL, Sequelize's `createTable` creates a database type for every enum column, named `enum_<table>_<column>` — for the example above `enum_accounts_status` and `enum_orders_priority`. Each column gets its own type, even when two columns list the same values.
+### Notes
 
-Sequelize does **not** remove these types when a migration drops a table, so the generated `down` step drops them explicitly after dropping the tables, with Sequelize's `dropEnum` (PostgreSQL only):
-
-```js
-if (queryInterface.sequelize.getDialect() === "postgres") {
-  await queryInterface.dropEnum("enum_accounts_status", { transaction });
-  await queryInterface.dropEnum("enum_orders_priority", { transaction });
-}
-```
-
-Without this, running the migration again after an undo would fail because the types still exist. On other databases (e.g. MySQL/MariaDB, where `ENUM` is a column type) there are no types to drop and the block is skipped.
-
-#### Standalone `Enum` blocks are not supported
-
-Standard DBML also allows a separate, reusable enum:
-
-```dbml
-Enum order_status {   // ✗ not supported
-  pending
-  shipped
-}
-```
-
-This is reported as an error — `Enum blocks are not supported; use an inline enum('a','b') type` — rather than ignored. Write the values inline on each column instead:
-
-```dbml
-status enum('pending', 'shipped')
-```
-
-#### Changing enum values later
-
-Edit the values in `db.dbml` and run `diff`. Adding and reordering values is generated directly; removing (or renaming) a value [can lose data](#changes-that-can-lose-data) and needs `--allow-data-loss`. Sequelize cannot change an existing enum type's values, so the migration rebuilds it with Sequelize operations only: the column becomes `TEXT`, the old type is dropped with `dropEnum`, and the column becomes the new `ENUM` (its default is set last).
-
-#### In `db-patch.dbml` and the models API
-
-- `db-patch.dbml` keeps inline enums exactly as written; dbdocs accepts them.
-- The [frozen models API](#models-api-frozen) defines them as `DataTypes.ENUM(...)`.
-
-### Notes and comments
-
-Notes become database comments, stored by the migration with their exact text (surrounding quotes removed).
+Drizzle cannot declare table or column comments, so drizzle-kit never writes `COMMENT ON`. Notes are therefore kept as **JSDoc comments** in the generated schema, directly above their table or column. They are not stored in the database.
 
 ```dbml
 Table orders {
-  id integer [pk, note: 'order number']   // column comment
-
-  Note: 'Orders placed by accounts'       // table comment, one line
-}
-
-Table invoices {
-  id integer [pk]
-
-  Note: {                                 // table comment, block form
-    'Invoices sent to customers'
-  }
-}
-
-Table payments [note: 'Incoming payments'] {   // table comment as a table setting
-  id integer [pk]
+  id integer [pk, note: 'order number']
+  Note: 'Orders placed by accounts'
 }
 ```
 
-`Note { … }` (without the colon) works the same as `Note: { … }`. Triple-quoted multi-line notes (`'''…'''`) are supported.
+```ts
+/** Orders placed by accounts */
+export const orders = pgTable("orders", {
+  /** order number */
+  id: integer("id").primaryKey(),
+});
+```
 
-Notes are plain text: a note such as `'[C] orders_total_ck CHECK (total > 0)'` is stored as a comment and is **never** turned into a constraint.
+`Note: '…'`, `Note: { … }`, `Note { … }` and the `note:` table setting all work, as do triple-quoted multi-line notes. Notes are plain text and are never turned into constraints.
 
 ### Relationships (foreign keys)
 
-The foreign key always ends up on the "many" side of the relationship. You can declare it on either side, inline or as a standalone `Ref:`.
+The foreign key always ends up on the "many" side. You can declare it on either side, inline or as a standalone `Ref:`.
 
-#### Inline references
-
-| DBML | Meaning | Foreign key is created on |
+| DBML | Foreign key on | Kind |
 |---|---|---|
-| `orders.account_id [ref: > accounts.id]` | many-to-one | `orders.account_id` → `accounts.id` |
-| `accounts.id [ref: < orders.account_id]` | one-to-many (same relationship, other side) | `orders.account_id` → `accounts.id` |
-| `account_kycs.kyc_id [ref: - kycs.id]` | one-to-one | `account_kycs.kyc_id` → `kycs.id`, and the column becomes **unique** |
-
-Add `delete:` and/or `update:` next to the `ref` to set the referential actions:
+| `orders.account_id [ref: > accounts.id]` | `orders.account_id` | many-to-one |
+| `accounts.id [ref: < orders.account_id]` | `orders.account_id` | same relationship, other side |
+| `profiles.user_id [ref: - users.id]` | `profiles.user_id`, which also becomes unique | one-to-one |
 
 ```dbml
 account_id integer [ref: > accounts.id, delete: cascade, update: no action, not null]
-created_by integer [ref: > accounts.id, delete: set null]
-```
 
-Actions are written as in SQL (`cascade`, `set null`, `set default`, `restrict`, `no action`) and generated in upper case:
-
-```js
-account_id: {
-  type: Sequelize.INTEGER,
-  allowNull: false,
-  references: { model: "accounts", key: "id" },
-  onDelete: "CASCADE",
-  onUpdate: "NO ACTION",
-},
-```
-
-`delete:` / `update:` without a `ref` on the same column is an error.
-
-> Inline `delete:` / `update:` are part of this project's DBML dialect; standard DBML only allows actions on standalone `Ref:` lines. The [`patch`](#documentation-with-dbdocs) command converts them for dbdocs.
-
-#### Standalone references
-
-```dbml
-Ref: orders.account_id > accounts.id [delete: cascade]
-
-Ref order_owner: orders.account_id > accounts.id      // named
-
-Ref {                                                 // block form
-  orders.approved_by > accounts.id
+Ref: orders.approved_by > accounts.id [delete: set null]
+Ref {
   orders.updated_by > accounts.id [update: cascade]
 }
 ```
 
-They follow the same `>`, `<`, `-` rules as inline references. Reference settings: `delete`, `update`, and `color` (accepted and ignored).
+```ts
+account_id: integer("account_id").notNull().references(() => accounts.id, { onDelete: "cascade", onUpdate: "no action" }),
+```
 
-#### Composite references
+- Actions: `cascade`, `set null`, `set default`, `restrict`, `no action`.
+- References are lazy (`() => table.column`), so self-references and cycles between tables need no special ordering.
 
-Several columns referencing several columns are written as standalone references with parentheses:
+**Composite references** are written as standalone references, and become `foreignKey()` in the table's extra config:
 
 ```dbml
 Ref: orders.(shop_id, code) > products.(shop_id, code) [delete: cascade]
 ```
 
-They become one multi-column foreign key, added with `addConstraint` after all tables exist:
-
-```js
-await queryInterface.addConstraint("orders", {
-  type: "foreign key",
-  fields: ["shop_id", "code"],
-  name: "orders_shop_id_code_fkey",
-  references: { table: "products", fields: ["shop_id", "code"] },
-  onDelete: "CASCADE",
-  transaction,
-});
+```ts
+}, (t) => [
+  foreignKey({ columns: [t.shop_id, t.code], foreignColumns: [products.shop_id, products.code] }).onDelete("cascade"),
+]);
 ```
 
-A composite one-to-one (`-`) also adds `{ type: "unique", fields: [...], name: "<table>_<columns>_key" }`. Both sides must list the same number of columns.
+**Declaring a relationship twice** (e.g. inline and as a `Ref:`) is fine when both declarations agree. If they differ, it is an error naming both lines.
 
-#### Self-references and cycles
-
-- A table may reference itself (`accounts.created_by > accounts.id`); the key is created with the table.
-- Tables are created in an order where every referenced table already exists, keeping your file order otherwise.
-- When tables reference each other in a cycle (`a → b → a`), the foreign key that closes the cycle is added with `addConstraint` (named `<table>_<column>_fkey`) after all tables exist, and removed first in `down`.
-
-#### Declaring a relationship twice
-
-Declaring the same relationship twice (for example inline on one side and as a standalone `Ref:`) is fine when both declarations agree; they are merged into one foreign key. If they differ in kind or actions, it is an error naming both lines:
-
-```text
-line 21: orders.account_id: Conflicting declarations of orders.account_id → accounts.id (lines 12 and 21)
-```
-
-#### Not supported
-
-- Many-to-many `<>` references (create a junction table instead).
-- Composite references written inline (use a standalone `Ref:`).
-- References to tables or columns that do not exist in the DBML.
+**Not supported:**
+- many-to-many `<>` (use a junction table);
+- inline composite references;
+- references to unknown tables or columns.
 
 ### Indexes and primary keys
 
 ```dbml
 Table orders {
-  id integer [pk, increment]
+  id integer [pk]
   account_id integer
   placed_at timestamp
   details jsonb
 
   indexes {
-    account_id                                         // single column
+    account_id
     (account_id, placed_at) [unique, name: 'orders_by_account']
-    details [type: gin]                                // index method
+    details [type: gin]
   }
 }
 ```
 
-| Index setting | Generated `addIndex` option |
+```ts
+}, (t) => [
+  index("orders_account_id").on(t.account_id),
+  uniqueIndex("orders_by_account").on(t.account_id, t.placed_at),
+  index("orders_details").using("gin", t.details),
+]);
+```
+
+- **Index name**: the declared `name:`, otherwise `<table>_<column>_<column>…`.
+- **Composite primary key**: an index entry marked `pk`, such as `(order_id, line_no) [pk]`. It becomes `primaryKey({ columns: [t.order_id, t.line_no] })` rather than an index. Declaring a primary key both on a column and in `indexes` is an error.
+- **Not supported**: expression indexes (backticks) and partial indexes. Write them by hand in a custom migration (`drizzle-kit generate --custom`).
+
+### Project, TableGroup and comments
+
+`Project` and `TableGroup` blocks are allowed and ignored. `//` comments are ignored anywhere outside quoted text.
+
+## The generated schema
+
+Sections always come in this order, so the same DBML gives a byte-identical file:
+
+1. A header: `// Generated by dbml2drizzle from db.dbml. Do not edit by hand.`
+2. Imports, with names sorted: `drizzle-orm` (`relations`, `sql`) and `drizzle-orm/pg-core`. Only what is used is imported.
+3. Enums, in table and column file order.
+4. Tables, in DBML file order. Each table's extra config lists the composite primary key, then the composite foreign keys, then the indexes.
+5. Relations (see [Relations](#relations)).
+
+**Identifiers:**
+- **Column keys**: the database name as is, quoted when it isn't a valid JavaScript identifier (`"first-name": varchar("first-name")`).
+- **Table exports**: the table name, with characters that can't appear in an identifier replaced by `_`. A `_` is prefixed when the name starts with a digit or is a reserved word, so the table `class` is exported as `_class` but stays `pgTable("class", …)`. Two tables that end up with the same export name are an error.
+
+The output contains no TypeScript type annotations, so it is also valid JavaScript (ESM).
+
+Don't edit the generated file. Change the DBML and regenerate.
+
+## Relations
+
+Every relationship generates Drizzle [`relations()`](https://orm.drizzle.team/docs/relations) on both tables, for the relational query API:
+
+```ts
+export const postsRelations = relations(posts, ({ one }) => ({
+  author: one(users, { fields: [posts.author_id], references: [users.id] }),
+}));
+
+export const usersRelations = relations(users, ({ many }) => ({
+  posts: many(posts),
+}));
+```
+
+**Naming rules:**
+
+| Side | Name |
 |---|---|
-| *(no name)* | `name: "<table>_<column>_<column>…"` (e.g. `orders_account_id`) |
-| `name: '…'` | `name: "…"` |
-| `unique` | `unique: true` |
-| `type: btree \| hash \| gin \| gist \| …` | `using: "GIN"` (upper-cased) |
-| `note: '…'` | accepted (not stored) |
-| `pk` | composite primary key — see below |
+| Foreign-key side | The column without a trailing `_id` / `Id` (`author_id` → `author`). If the column has no such suffix, or the name is already a column, it is `<column>_<target table>` (`approved_by` → `approved_by_users`). A composite key uses the target table name. |
+| Referenced side | The source table name (`posts`); `one()` for a one-to-one, `many()` otherwise. |
+| Self-references, or several relationships between the same two tables | Both sides get `relationName: "<table>_<columns>"`, and the referenced side is named `<table>_by_<columns>` (`users_by_manager_id`). |
 
-```js
-await queryInterface.addIndex("orders", ["account_id","placed_at"], { name: "orders_by_account", unique: true, transaction });
-```
+- A name that is still taken by a column or another relation is an error naming the table. Rename the column in the DBML.
+- Tables without relationships get no relations export.
 
-#### Composite primary keys
+## Renaming a table or column
 
-An index entry marked `pk` declares the table's primary key; it does not create an index:
+DBML cannot say "this was renamed", and `renamed_from` is no longer supported; using it is an error. Just rename the table or column in the DBML, regenerate the schema, and run `drizzle-kit generate` **in a terminal**. drizzle-kit asks whether the new name is a rename or a new table or column. Answer "rename" to keep the data.
 
-```dbml
-Table order_lines {
-  order_id integer
-  line_no integer
+drizzle-kit 0.31 has no option to skip this prompt, so don't run `generate` after a rename in CI. Always review the SQL: answering "create" drops the old column and its data.
 
-  indexes {
-    (order_id, line_no) [pk]
-  }
-}
-```
+## Moving from dbml2sequelize
 
-Both columns get `primaryKey: true` in `createTable`, which Sequelize turns into `PRIMARY KEY (order_id, line_no)`. Declaring a primary key both on a column and in `indexes` is an error.
+To switch an existing database that was created by dbml2sequelize migrations:
 
-Expression indexes (backticks, e.g. `` `lower(name)` ``) and partial indexes are not supported; write them in a hand-written migration.
+1. Generate the schema, then run `drizzle-kit generate` to get the initial migration.
+2. Run `drizzle-kit pull` against the existing database and compare its output with the generated schema. Fix the DBML until they match. Expect these differences, because types are now converted [as written](#converted-as-written):
+   - **`varchar` without a length**: Sequelize created `varchar(255)`. Write `varchar(255)` in the DBML to keep it.
+   - **`timestamp` / `datetime`**: Sequelize created `timestamp with time zone`. Write `timestamptz` to keep it.
+   - **`increment`**: Sequelize created `serial` columns, and the generator now uses identity columns. Either accept the conversion in the next migration (review it), or keep the database as it is.
+   - **Notes**: the comments Sequelize stored stay in the database, but new Drizzle migrations don't add or change comments.
+3. Mark the initial migration as applied in drizzle-kit's migrations table instead of running it.
 
-### Project, TableGroup and line comments
+Other removed features:
+- the `migrate`, `diff` and `baseline` commands: use `drizzle-kit generate`;
+- the snapshot file and `--allow-data-loss`: drizzle-kit keeps its own snapshots, and you review the SQL;
+- the models API.
 
-```dbml
-Project shop {
-  database_type: 'PostgreSQL'
-  Note: 'Shop schema'
-}
+## Target databases
 
-TableGroup billing {
-  orders
-  invoices
-}
-
-// a comment on its own line
-Table orders {
-  id integer [pk]   // a trailing comment
-}
-```
-
-`Project` and `TableGroup` blocks are allowed and ignored by the migration. `//` comments are ignored anywhere outside quoted text.
-
-## The generated migration
-
-For this DBML:
-
-```dbml
-Table accounts {
-  id integer [pk, increment]
-  status enum('active', 'suspended', 'closed') [not null, default: 'active', note: 'account lifecycle']
-  created_dt timestamp [default: `now()`]
-}
-
-Table orders {
-  id integer [pk, increment]
-  account_id integer [ref: > accounts.id, delete: cascade, not null]
-  priority enum('low', 'normal', 'high')
-  details jsonb
-
-  indexes {
-    (account_id, priority) [name: 'orders_by_priority']
-  }
-
-  Note: {
-    'Orders placed by accounts'
-  }
-}
-```
-
-`dbml2sequelize migrate db.dbml` writes:
-
-```js
-"use strict";
-
-/**
- * Generated by dbml2sequelize from db.dbml.
- * Regenerate it from the DBML instead of editing it by hand.
- */
-/** @type {import('sequelize-cli').Migration} */
-module.exports = {
-  async up(queryInterface, Sequelize) {
-    await queryInterface.sequelize.transaction(async (transaction) => {
-      await queryInterface.createTable(
-        "accounts",
-        {
-          id: {
-            type: Sequelize.INTEGER,
-            primaryKey: true,
-            autoIncrement: true,
-          },
-          status: {
-            type: Sequelize.ENUM("active", "suspended", "closed"),
-            allowNull: false,
-            defaultValue: "active",
-            comment: "account lifecycle",
-          },
-          created_dt: {
-            type: Sequelize.DATE,
-            defaultValue: Sequelize.fn("now"),
-          },
-        },
-        { transaction }
-      );
-
-      await queryInterface.createTable(
-        "orders",
-        {
-          id: {
-            type: Sequelize.INTEGER,
-            primaryKey: true,
-            autoIncrement: true,
-          },
-          account_id: {
-            type: Sequelize.INTEGER,
-            allowNull: false,
-            references: { model: "accounts", key: "id" },
-            onDelete: "CASCADE",
-          },
-          priority: {
-            type: Sequelize.ENUM("low", "normal", "high"),
-          },
-          details: {
-            type: Sequelize.JSONB,
-          },
-        },
-        { comment: "Orders placed by accounts", transaction }
-      );
-
-      await queryInterface.addIndex("orders", ["account_id","priority"], { name: "orders_by_priority", transaction });
-    });
-  },
-
-  async down(queryInterface, Sequelize) {
-    await queryInterface.sequelize.transaction(async (transaction) => {
-      await queryInterface.dropTable("orders", { transaction });
-      await queryInterface.dropTable("accounts", { transaction });
-
-      if (queryInterface.sequelize.getDialect() === "postgres") {
-        await queryInterface.dropEnum("enum_accounts_status", { transaction });
-        await queryInterface.dropEnum("enum_orders_priority", { transaction });
-      }
-    });
-  },
-};
-```
-
-### Order of operations
-
-| `up` | `down` |
-|---|---|
-| 1. `createTable` for each table, referenced tables first | 1. `removeConstraint` for every constraint `up` added in step 2, in reverse order |
-| 2. `addConstraint` for foreign keys that close a cycle, composite foreign keys and composite one-to-one unique constraints | 2. `dropTable` for each table, in reverse order |
-| 3. `addIndex` for each index | 3. On PostgreSQL, `dropEnum` for each enum column |
-
-Each step runs all of its calls inside one Sequelize transaction. What happens if a step fails part-way is up to Sequelize and your database (PostgreSQL rolls back table changes inside a transaction; MySQL commits each one immediately).
-
-### Properties
-
-- **Deterministic**: the same DBML always produces the same file content; only the timestamp in the file name differs.
-- **Column attribute order**: `type`, `primaryKey`, `autoIncrement`, `allowNull`, `unique`, `defaultValue`, `references`, `onDelete`, `onUpdate`, `comment` — each only when set.
-- **No automatic timestamps**: only the columns you declare are created. If you want `created_dt` / `modified_dt`, declare them (see the defaults table).
-- **Sequelize only**: every call is a `queryInterface` operation; the migration contains no SQL.
-
-## Incremental migrations
-
-After the initial migration, keep editing `db.dbml` and run `diff` for each change:
-
-```bash
-npx dbml2sequelize diff db/db.dbml --out migrations
-npx sequelize-cli db:migrate
-```
-
-Generated migrations use **only** operations Sequelize's `queryInterface` provides — never raw SQL. A change those operations cannot express is not supported: `diff` reports it and writes nothing (see [Changes Sequelize cannot express](#changes-sequelize-cannot-express)).
-
-### The snapshot
-
-`migrations/dbml2sequelize-snapshot.json` holds the schema as it was when the last migration was generated: the parsed tables and relationships, without line numbers, so it only changes when the schema does. `diff` compares `db.dbml` with it, and replaces it after writing a migration. The package never reads git or connects to a database.
-
-- `migrate` writes it with the initial migration (and refuses to overwrite one, see [`migrate`](#migrate)).
-- `baseline` writes it without a migration — for a project whose migrations were generated before 2.1.0 or written by hand, once the database matches `db.dbml`.
-- Commit it together with the migrations, and never edit it by hand. If two branches change the schema, resolve the conflict by merging `db.dbml`, then running `baseline` on the merged result once both branches' migrations are in.
-- `diff` without a snapshot exits `2` and points to `baseline`.
-
-### What `diff` generates
-
-| Change in `db.dbml` | Migration step |
-|---|---|
-| Table added | `createTable`, exactly as the initial migration creates it, then its indexes |
-| Table removed | `removeConstraint` for its foreign keys, `removeIndex`, `dropTable` (data loss) |
-| Column added | `addColumn`, then `addConstraint` for its foreign key |
-| Column removed | `removeColumn` (data loss) |
-| Type, `not null`/`null`, default changed | `changeColumn` with the full new definition |
-| Column note changed from one text to another | `changeColumn` with the new comment |
-| `unique` added or removed | `addConstraint` / `removeConstraint` (`<table>_<column>_key`) |
-| Enum values added, reordered or removed | the type is rebuilt (see [Enums](#changing-enum-values-later)) |
-| Primary key changed | `removeConstraint` / `addConstraint` (`<table>_pkey`) (data loss) |
-| Index added, removed or changed | `addIndex` / `removeIndex` |
-| Reference added, removed, or its target or actions changed | `addConstraint` / `removeConstraint` (`<table>_<columns>_fkey`) |
-| Table or column renamed with `renamed_from` | `renameTable` / `renameColumn` |
-| Column order changed | nothing |
-
-Steps are ordered so every dependency holds: foreign keys are removed before the columns or keys they use change and re-added afterwards, renames come before other changes, and new tables are created in dependency order. `changeColumn` only ever receives `type`, `allowNull`, `defaultValue` and `comment`, because Sequelize's `changeColumn` adds a duplicate unique rule for `unique` and skips the type change when `references` is present. `up` and `down` each run in one transaction, and `down` undoes every step in reverse order using the snapshot's definitions — it restores structure, not data. Data is never moved or converted; add that to the migration by hand if a change needs it.
-
-### Renames
-
-Without help, a renamed table or column looks like one removed and one added, which would drop its data. Declare the old name instead:
-
-```dbml
-Table people [renamed_from: 'users'] {
-  id integer [pk, increment]
-  full_name varchar(100) [renamed_from: 'fullname']
-}
-```
-
-`diff` then emits `queryInterface.renameTable("users", "people")` and `queryInterface.renameColumn("people", "fullname", "full_name")`, and keeps the data. Other changes to the same column are applied after the rename. Constraints, indexes and enum types whose names derive from the old name are re-added under the new name (see [Derived names](#derived-names)).
-
-- Leave `renamed_from` in place: once the snapshot has the new name, it is ignored.
-- It is an error when the old name exists in neither the snapshot nor `db.dbml`, when the old name is still declared, or when two tables (or two columns of one table) claim the same old name.
-- The initial migration and the models API ignore `renamed_from`; `db-patch.dbml` leaves it out.
-
-### Changes that can lose data
-
-`diff` refuses these unless you pass `--allow-data-loss` (exit `3`, nothing written), listing all of them in one run:
-
-- removing a table or a column;
-- changing a column's type, except **widening**: the same type with a larger length or precision and every other argument unchanged (`varchar(50)` → `varchar(100)`, `decimal(10,2)` → `decimal(12,2)`, `timestamp(3)` → `timestamp(6)`). Adding or removing a length, or changing a decimal's scale or a `text` size, counts as a type change;
-- removing an enum value (including renaming one);
-- adding, removing or changing a table's primary key.
+PostgreSQL (`pg`) is the only target today. Drizzle uses a separate schema per database, so each target is a self-contained module:
 
 ```text
-$ npx dbml2sequelize diff db/db.dbml
-Refused: these changes can lose data (pass --allow-data-loss to generate them):
-users.fullname: column removed (if it was renamed, add renamed_from: 'fullname' to the new column)
+src/dialects/
+  index.js        registry: { pg }
+  pg/
+    types.js      DBML type → pg-core builder
+    defaults.js   default values
+    enums.js      enum declarations
+    index.js      the dialect object
 ```
 
-Removing a foreign key, index, unique rule or default, and changing nullability, are not data-loss changes. If existing rows conflict with a new rule (nulls in a column made `not null`), the database reports it when the migration runs.
+Adding MySQL or SQLite means:
+1. add a folder with the same parts;
+2. register it in `src/dialects/index.js`;
+3. add tests for its full type mapping.
 
-### Changes Sequelize cannot express
-
-Sequelize's `queryInterface` has no operation for these, forward or in `down`, so `diff` reports them as errors (exit `1`) and writes nothing:
-
-| Change | Message |
-|---|---|
-| A note added to an existing column that had none | `Adding a note to an existing column is not supported by Sequelize migrations` |
-| A column note removed | `Removing a column note is not supported by Sequelize migrations` |
-| A table note added, changed or removed on an existing table | `Changing a table note is not supported by Sequelize migrations` |
-| `increment` added or removed, or any change to an `increment` column | `Changing an auto-increment column is not supported by Sequelize migrations` |
-
-A new table or a new column brings its notes with it. To apply an unsupported change without losing the other changes in `db.dbml`, follow the order the error ends with:
-
-1. undo that edit in the DBML,
-2. run `dbml2sequelize diff` for the remaining changes,
-3. redo the edit,
-4. write its migration by hand,
-5. run `dbml2sequelize baseline`.
-
-### Derived names
-
-Objects the DBML does not name get these names, which `diff` uses to find them again:
-
-| Object | Name |
-|---|---|
-| Foreign key | `<table>_<column>[_<column>…]_fkey` |
-| Unique rule | `<table>_<column>[_<column>…]_key` |
-| Primary key | `<table>_pkey` |
-| Unnamed index | `<table>_<column>[_<column>…]` |
-| Enum type (PostgreSQL) | `enum_<table>_<column>` |
-
-These match PostgreSQL's own defaults for the constraints the initial migration creates inline. Renaming a table or column with `queryInterface` does not rename them, so `diff` removes and re-adds each one under its new derived name (rebuilding indexes on large tables takes time), and rebuilds affected enum types. Names you declare (`name: '…'`) are kept as written.
+The parser and the shared schema description don't change.
 
 ## Errors
 
-The whole file is checked before anything is written, and every problem is reported in one run, in line order, as `line <n>: <table>.<column>: <message>`.
+The whole file is checked before anything is written. Every problem is reported in one run, in line order, as `line <n>: <table>.<column>: <message>`.
 
 | Message | Cause |
 |---|---|
-| `Unsupported data type '<type>'` | A type not in the [type table](#column-types). |
+| `Unsupported data type '<type>'` | A type not in the [type table](#column-types-postgresql). |
+| `Type '<type>' has no PostgreSQL mapping` | A known DBML type the target can't express. |
+| `increment needs integer, bigint or smallint` | `increment` on another type. |
 | `enum must have at least one value` | `enum()` |
 | `text accepts only tiny, medium or long` | `text('huge')` |
+| `renamed_from is no longer supported: confirm renames in drizzle-kit generate's prompt` | `renamed_from` on a table or column. |
 | `Column is missing its type` | A column line with only a name. |
-| `Unknown column setting '<setting>'` | A setting not in the [settings table](#column-settings). |
+| `Unknown column setting '<setting>'` / `Unknown table setting '<setting>'` | A setting that isn't listed above. |
 | `delete/update actions need a ref on the same column` | `delete:` / `update:` without `ref:`. |
-| `References unknown table '<table>'` | A `ref` to a table that is not in the DBML. |
-| `References unknown column '<table>.<column>'` | A `ref` to a column that is not in that table. |
-| `Malformed reference '<text>'` | A `ref` or `Ref:` line that cannot be read. |
+| `References unknown table '<table>'` / `References unknown column '<table>.<column>'` | A `ref` to something that isn't in the DBML. |
+| `Malformed reference '<text>'` | A `ref` or `Ref:` line that can't be read. |
 | `Many-to-many references (<>) are not supported` | `ref: <> …` |
 | `Composite references must be written as standalone Ref: lines` | `ref: > t.(a, b)` inline. |
 | `Composite reference sides have different column counts` | `Ref: a.(x) > b.(x, y)` |
-| `Conflicting declarations of A → B (lines n and m)` | The same relationship declared twice with different kind or actions. |
+| `Conflicting declarations of A → B (lines n and m)` | The same relationship declared twice, differently. |
 | `Unknown reference setting '<setting>'` | A `Ref:` setting other than `delete`, `update`, `color`. |
-| `Index refers to unknown column '<column>'` | An index on a column that does not exist. |
-| `Unknown index setting '<setting>'` | An index setting other than `type`, `name`, `unique`, `pk`, `note`. |
-| `Expression indexes are not supported` | `` `lower(name)` `` in `indexes`. |
-| `Table '<table>' declares its primary key twice` | Column-level `pk` and index-level `pk` in the same table. |
+| `Index refers to unknown column '<column>'` / `Unknown index setting '<setting>'` / `Expression indexes are not supported` | Index problems. |
+| `Table '<table>' declares its primary key twice` | Column-level and index-level `pk` in one table. |
+| `Relation '<name>' collides with a column or relation of '<table>'` | See [Relations](#relations). |
+| `Table name '<a>' and '<b>' both become '<id>' in generated code` | See [identifiers](#the-generated-schema). |
 | `Enum blocks are not supported; use an inline enum('a','b') type` | A standalone `Enum { }` block. |
-| `Unknown table setting '<setting>'` | A table setting other than `note`, `headercolor`, `renamed_from`. |
-| `renamed_from needs the previous name` | `renamed_from: ''` |
-| `renamed_from '<old>' matches no table in the snapshot` / `… no column of '<table>' in the snapshot` | `diff`: the old name exists in neither the snapshot nor the DBML. |
-| `renamed_from '<old>' names table '<old>', which is still declared` (or column) | `diff`: the old name is still in the DBML. |
-| `renamed_from '<old>' is also claimed by table '<other>'` (or column) | `diff`: two tables or columns claim the same old name. |
-| `… is not supported by Sequelize migrations` | `diff`: see [Changes Sequelize cannot express](#changes-sequelize-cannot-express). |
 | `Duplicate table` / `Duplicate column` / `Table has no columns` | As described. |
 | `Unknown block '<word>'` / `'<block>' must be inside a Table` / `'<block>' is not allowed inside a Table` | A block in the wrong place. |
 | `Block '<header>' is missing its closing '}'` / `Unexpected '}'` / `Unexpected line '<text>'` | Unbalanced braces or stray text. |
 
 ## Converted as written
 
-The package checks the **DBML** — syntax, types, references and conflicting declarations — and that each directive maps to a Sequelize option. It does **not** check database-specific rules or limits, for example:
-
-- identifier length (PostgreSQL truncates names over 63 characters),
-- which types or index methods a particular database supports,
-- whether a default value is one of an enum's values,
-- a `delete: set null` on a `not null` column.
-
-Those are left to Sequelize and your database when the migration runs. Nothing is renamed, shortened or "fixed"; if the database rejects something, fix it in the DBML and regenerate.
+The package checks the **DBML**: syntax, types, references, conflicting declarations, and that each directive maps to a Drizzle construct for the target. It does **not** check database-specific rules or limits, such as identifier length or a `delete: set null` on a `not null` column. Those are left to drizzle-kit and your database. Nothing is renamed, shortened or "fixed". If the database rejects something, fix it in the DBML and regenerate.
 
 ## Documentation with dbdocs
 
 Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject two parts of this project's dialect: `delete:` / `update:` inside a column's settings, and `Note: {` blocks. The `patch` command writes a copy they accept:
 
 ```bash
-npx dbml2sequelize patch db/db.dbml          # → db/db-patch.dbml
+npx dbml2drizzle patch db/db.dbml          # → db/db-patch.dbml
 npx dbdocs build ./db/db-patch.dbml
 ```
 
-What changes in the copy:
-
 | `db.dbml` | `db-patch.dbml` |
 |---|---|
-| `account_id integer [ref: > accounts.id, delete: cascade, not null] // owner` | `account_id integer [not null] // owner` and, at the end of the file, `Ref: orders.account_id > accounts.id [delete: cascade]` |
-| `id integer [pk, ref: < payments.invoice_id, delete: restrict]` | `id integer [pk]` and `Ref: invoices.id < payments.invoice_id [delete: restrict]` (direction kept) |
+| `account_id integer [ref: > accounts.id, delete: cascade, not null] // owner` | `account_id integer [not null] // owner`, plus `Ref: orders.account_id > accounts.id [delete: cascade]` at the end of the file |
 | `Note: {` | `Note {` |
-| `renamed_from: '…'` on a table or column | removed (it only drives `diff`) |
-| everything else — tables, types, enums, other settings, notes, indexes, inline refs without actions, standalone `Ref:` lines, `Project`, `TableGroup`, comments, blank lines | copied unchanged |
+| everything else | copied unchanged |
 
-Moved references are appended after the last block under the comment `// Relationships moved from inline settings by dbml2sequelize`. Every relationship keeps its direction and actions, the output is deterministic, and `db.dbml` is never modified. Regenerate the copy whenever `db.dbml` changes; don't edit it by hand.
-
-## Models API (frozen)
-
-The 1.x API defines in-memory models instead of writing a migration. It still works with the same signature but receives no new features:
-
-```js
-const { Sequelize, DataTypes } = require("sequelize");
-const parseDbml = require("dbml2sequelize");
-
-const sequelize = new Sequelize("db", "user", "password", { dialect: "postgres" });
-const models = parseDbml(sequelize, DataTypes, "db/db.dbml", { timestamps: false });
-// models: one sequelize.define() model per table, in file order
-```
-
-| Parameter | Description |
-|---|---|
-| `sequelize` | A Sequelize instance. |
-| `DataTypes` | `Sequelize.DataTypes`. |
-| `path` | Path to the `.dbml` file. |
-| `options` | Model options passed to every `sequelize.define` call (e.g. `timestamps`, `createdAt`). Each model also gets its `indexes` and table `comment`. |
-
-It shares the parser with the migration generator, so it benefits from the 2.0.0 parsing fixes (listed in [CHANGELOG.md](CHANGELOG.md)) and throws `DbmlError` for DBML problems. Composite foreign keys are not added to models, and `renamed_from` is ignored.
-
-## Limitations and FAQ
-
-**How do I change the schema after the first migration?**
-Edit `db.dbml` and run `dbml2sequelize diff` (see [Incremental migrations](#incremental-migrations)). Changes Sequelize cannot express, and data conversions, are still written by hand.
-
-**My project uses ES modules (`"type": "module"`).**
-Generated migrations are CommonJS. Rename the file to `.cjs` so sequelize-cli can load it.
-
-**Can I add CHECK constraints, partial indexes or views?**
-Not through DBML. Add them in a hand-written migration that runs after the generated one. Notes describing them are kept as comments only.
-
-**Why does every `timestamp` column store a time zone on PostgreSQL?**
-Types map to Sequelize data types, and Sequelize's `DATE` is `TIMESTAMP WITH TIME ZONE` on PostgreSQL. There is no Sequelize type for a timestamp without time zone.
-
-**Which databases are supported?**
-The generator writes Sequelize calls; Sequelize and your database decide what works. The output is verified against PostgreSQL. The only database-specific code in the migrations is the PostgreSQL-only `dropEnum` call, guarded by a dialect check.
-
-**Can I edit the generated migration?**
-You can, but your edits won't be reproduced by later generations. Generated files are never overwritten: `migrate` refuses to run again once a snapshot exists, and `diff` always writes a new file with a new timestamp. Keep schema changes in the DBML, and anything DBML or Sequelize can't express in separate hand-written migrations.
+- Moved references are appended under the comment `// Relationships moved from inline settings by dbml2drizzle`.
+- `db.dbml` is never modified.
+- Regenerate the copy whenever `db.dbml` changes.
 
 ## Contributing to this package
 
 ```bash
 pnpm install
-pnpm test        # node:test, no database needed
+pnpm test        # node:test; generated schemas are checked through drizzle-kit, no database needed
 ```
 
 Every parser fix and every change to generated output comes with a test that asserts the generated content, using inline DBML strings.
 
 | Path | Purpose |
 |---|---|
-| `src/parse-schema.js` | The single DBML parser; produces the schema description every output reads. |
-| `src/parser/` | Line and block parsers (tables, columns, indexes, standalone `Ref:` lines). |
-| `src/converter/` | Types, defaults, notes, indexes, relationships, and the models-API adapter. |
-| `src/utils/` | Quote-aware line scanning, block grouping, settings parsing. |
-| `src/migration/` | Table ordering, shared source builders, and the initial and incremental migration generators and writers. |
-| `src/snapshot/` | Snapshot creation, reading and `baseline`. |
-| `src/diff/` | Snapshot-to-DBML comparison: renames, unsupported changes, data-loss classification, derived names. |
+| `src/parse-schema.js` | The single DBML parser. It produces the schema description that every output reads. |
+| `src/parser/`, `src/utils/` | Line and block parsing. |
+| `src/converter/` | Types (canonical DBML names), defaults, notes, indexes, relationships. |
+| `src/dialects/` | One module per target database. |
+| `src/generator/` | Schema generator, relations, identifiers, file writer. |
 | `src/patch/` | `db-patch.dbml` generator and writer. |
-| `src/errors.js` | `DbmlError`, `DataLossError`, `SnapshotError` and the error collector. |
-| `bin/dbml2sequelize.js` | Command line. |
-| `tests/` | `node:test` tests with inline DBML. (`test/` is reserved for private schemas and is gitignored.) |
+| `bin/dbml2drizzle.js` | Command line. |
+| `tests/` | `node:test` tests. (`test/` is reserved for private schemas and is gitignored.) |
 
 ## License
 

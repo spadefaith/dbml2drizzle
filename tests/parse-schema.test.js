@@ -113,7 +113,7 @@ Table b {
   assert.deepEqual(schema.tables[0].columns.map((column) => column.name), ["id"]);
 });
 
-test("contains plain data only, no Sequelize objects", () => {
+test("contains plain data only, no ORM objects", () => {
   const schema = parseSchema(dbml);
   assert.deepEqual(JSON.parse(JSON.stringify(schema)), schema);
 });

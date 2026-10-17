@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
 const { Parser } = require("@dbml/core");
-const { parseSchema, generateDbPatch, writeDbPatch, writeMigration } = require("../src");
+const { parseSchema, generateDbPatch, writeDbPatch, writeSchema } = require("../src");
 const { writeTemp } = require("./helpers");
 
 const dbml = `Project shop {
@@ -133,33 +133,9 @@ test("writeDbPatch honours outPath and replaces an existing file", () => {
   assert.equal(fs.readFileSync(outPath, "utf8"), generateDbPatch(dbml));
 });
 
-test("renamed_from is removed from table headers and columns, and the patch still parses", () => {
-  const renamed = `Table people [renamed_from: 'users', headercolor: #3498DB] {
-  id integer [pk]
-  full_name text [renamed_from: 'fullname', note: 'shown']
-  nick text [renamed_from: 'nickname']
-}
-
-Table orders [renamed_from: 'purchases'] {
-  id integer [pk]
-  buyer_id integer [renamed_from: 'people_id', ref: > people.id, delete: cascade] // who
-}
-`;
-  const patch = generateDbPatch(renamed);
-
-  assert.doesNotMatch(patch, /renamed_from/);
-  assert.match(patch, /^Table people \[headercolor: #3498DB\] \{$/m);
-  assert.match(patch, /^Table orders \{$/m);
-  assert.match(patch, /^  full_name text \[note: 'shown'\]$/m);
-  assert.match(patch, /^  nick text$/m);
-  assert.match(patch, /^  buyer_id integer \/\/ who$/m);
-  assert.match(patch, /^Ref: orders\.buyer_id > people\.id \[delete: cascade\]$/m);
-  assert.doesNotThrow(() => parseStandard(patch));
-});
-
-test("writeMigration never writes db-patch.dbml", () => {
+test("writeSchema never writes db-patch.dbml", () => {
   const { dir, file } = writeTemp("db.dbml", dbml);
-  writeMigration(file, { outDir: path.join(dir, "migrations") });
+  writeSchema(file);
 
-  assert.deepEqual(fs.readdirSync(dir).sort(), ["db.dbml", "migrations"]);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["db.dbml", "db.schema.ts"]);
 });
