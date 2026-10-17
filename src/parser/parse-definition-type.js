@@ -1,4 +1,4 @@
-const BLOCK_TYPES = ["Table", "Project", "TableGroup", "Ref", "indexes", "Note"];
+const BLOCK_TYPES = ["Table", "Project", "TableGroup", "Ref", "indexes", "checks", "Note"];
 
 function unquote(name) {
   return name.replace(/^"(.*)"$/, "$1");

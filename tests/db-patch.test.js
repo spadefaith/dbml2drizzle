@@ -139,3 +139,24 @@ test("writeSchema never writes db-patch.dbml", () => {
 
   assert.deepEqual(fs.readdirSync(dir).sort(), ["db.dbml", "db.schema.ts"]);
 });
+
+test("checks are kept unchanged and the standard parser reads them", () => {
+  const source = `Table events {
+  id integer [pk]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  seats integer [check: \`seats > 0\`]
+
+  checks {
+    \`ends_at > starts_at\` [name: 'events_valid_range']
+  }
+}
+`;
+  const output = generateDbPatch(source);
+  const table = new Parser().parse(output, "dbmlv2").schemas[0].tables[0];
+
+  assert.equal(output, source);
+  assert.equal(table.fields.find((field) => field.name == "seats").checks[0].expression, "seats > 0");
+  assert.equal(table.checks[0].name, "events_valid_range");
+  assert.equal(table.checks[0].expression, "ends_at > starts_at");
+});

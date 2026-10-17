@@ -10,6 +10,7 @@ module.exports = {
   module: "drizzle-orm/pg-core",
   tableBuilder: "pgTable",
   enumBuilder: "pgEnum",
+  checkBuilder: "check",
   columnCall,
   defaultModifier,
   collectEnums,

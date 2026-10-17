@@ -182,6 +182,7 @@ email varchar(100) [unique, not null, note: 'login, never shared']
 | `note: '…'` | a JSDoc comment; see [Notes](#notes) |
 | `ref: > table.column` (also `<`, `-`) | `.references(…)`; see [Relationships](#relationships-foreign-keys) |
 | `delete: <action>` / `update: <action>` | `onDelete` / `onUpdate` of the column's `ref` |
+| ``check: `<expression>` `` | a check constraint named `<table>_<column>_check`; see [Check constraints](#check-constraints) |
 
 Commas, colons, brackets, braces and `//` inside quoted values are plain text. Use `\'` for a quote inside a quoted value. Any other setting is an error: `Unknown column setting '<setting>'`.
 
@@ -311,6 +312,35 @@ Table orders {
 - **Composite primary key**: an index entry marked `pk`, such as `(order_id, line_no) [pk]`. It becomes `primaryKey({ columns: [t.order_id, t.line_no] })` rather than an index. Declaring a primary key both on a column and in `indexes` is an error.
 - **Not supported**: expression indexes (backticks) and partial indexes. Write them by hand in a custom migration (`drizzle-kit generate --custom`).
 
+### Check constraints
+
+```dbml
+Table events {
+  id integer [pk]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  seats integer [check: `seats > 0`]
+
+  checks {
+    `ends_at > starts_at` [name: 'events_valid_range']
+  }
+}
+```
+
+```ts
+}, (t) => [
+  check("events_seats_check", sql`seats > 0`),
+  check("events_valid_range", sql`ends_at > starts_at`),
+]);
+```
+
+- **On a column**: ``check: `<expression>` ``, at most one per column. It is named `<table>_<column>_check`.
+- **On a table**: one `checks { }` block, one `` `<expression>` [name: '<name>'] `` per line. `name` is required and is the only setting, so names stay the same when checks are added or reordered.
+- Drizzle declares every check on the table, so column checks are emitted there too: column checks first, in column order, then table checks in block order.
+- The expression is copied exactly as written and is not validated; the database reports invalid SQL. Write `` \` `` for a backtick inside it.
+- Check names must be unique across the schema.
+- Standard DBML accepts both forms, so `dbml2drizzle patch` copies them unchanged.
+
 ### Project, TableGroup and comments
 
 `Project` and `TableGroup` blocks are allowed and ignored. `//` comments are ignored anywhere outside quoted text.
@@ -425,6 +455,12 @@ The whole file is checked before anything is written. Every problem is reported 
 | `Conflicting declarations of A → B (lines n and m)` | The same relationship declared twice, differently. |
 | `Unknown reference setting '<setting>'` | A `Ref:` setting other than `delete`, `update`, `color`. |
 | `Index refers to unknown column '<column>'` / `Unknown index setting '<setting>'` / `Expression indexes are not supported` | Index problems. |
+| ``check must be a backtick expression, e.g. check: `price >= 0` `` / `Check must be a backtick expression` | A quoted string instead of a backtick expression. |
+| `Check expression is empty` | ``check: `` `` or an empty `checks` entry. |
+| `A column takes one check; use a table checks { } block for more` | Two `check:` settings on one column. |
+| `Table checks need a name, e.g. [name: '…']` / `Unknown check setting '<setting>'` | A `checks` entry without `name`, or with another setting. |
+| `Table '<table>' has more than one checks block` | Two `checks { }` blocks in one table. |
+| `Duplicate check name '<name>' (also on line <n>)` | Two checks with the same name. |
 | `Table '<table>' declares its primary key twice` | Column-level and index-level `pk` in one table. |
 | `Relation '<name>' collides with a column or relation of '<table>'` | See [Relations](#relations). |
 | `Table name '<a>' and '<b>' both become '<id>' in generated code` | See [identifiers](#the-generated-schema). |

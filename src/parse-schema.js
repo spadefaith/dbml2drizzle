@@ -5,8 +5,10 @@ const { createCollector } = require("./errors");
 const parseDefinitionType = require("./parser/parse-definition-type");
 const parseTableContent = require("./parser/parse-table-content");
 const parseIndexesContent = require("./parser/parse-indexes-content");
+const parseChecksContent = require("./parser/parse-checks-content");
 const convertAttributes = require("./converter/convert-attributes");
 const convertIndexes = require("./converter/convert-indexes");
+const convertChecks = require("./converter/convert-checks");
 const convertNote = require("./converter/convert-note");
 const resolveRelationships = require("./converter/resolve-relationships");
 const parseRefLine = require("./parser/parse-ref-line");
@@ -64,6 +66,7 @@ function parseTable(block, definition, collector) {
   const columnLines = [];
   let comment = "";
   let indexLines = [];
+  let checkLines = null;
 
   for (const setting of definition.settings ? parseSettings(definition.settings) : []) {
     if (setting.key == "renamed_from") {
@@ -94,6 +97,10 @@ function parseTable(block, definition, collector) {
 
     if (nestedDefinition.type == "indexes") {
       indexLines = indexLines.concat(nested.items.map(parseIndexesContent));
+    } else if (nestedDefinition.type == "checks") {
+      checkLines
+        ? collector.add({ table: name, line: nested.line, message: `Table '${name}' has more than one checks block` })
+        : (checkLines = nested.items.map(parseChecksContent));
     } else if (nestedDefinition.type == "Note") {
       comment = convertNote(nested);
     } else {
@@ -111,7 +118,7 @@ function parseTable(block, definition, collector) {
     collector.add({ table: name, line: block.line, message: "Table has no columns" });
   }
 
-  const { columns, rawRefs } = convertAttributes(name, columnLines, collector);
+  const { columns, rawRefs, columnChecks } = convertAttributes(name, columnLines, collector);
   const { indexes, primaryKeys } = convertIndexes(name, columns, indexLines, collector);
 
   if (primaryKeys.length) {
@@ -130,8 +137,10 @@ function parseTable(block, definition, collector) {
     }
   }
 
+  const checks = convertChecks(name, columnChecks, checkLines || [], collector);
+
   return {
-    table: { name, comment, columns, indexes, line: block.line },
+    table: { name, comment, columns, indexes, checks, line: block.line },
     rawRefs,
     patchEdits: columnLines.flatMap((columnLine) => columnLineEdits(name, columnLine)),
   };
@@ -187,6 +196,16 @@ module.exports = function parseSchema(text) {
   }
 
   const relationships = resolveRelationships(rawRefs, tables, collector);
+  const checkLinesByName = new Map();
+
+  for (const { name: table, checks } of tables) {
+    for (const check of checks) {
+      const first = checkLinesByName.get(check.name);
+      first == undefined
+        ? checkLinesByName.set(check.name, check.line)
+        : collector.add({ table, line: check.line, message: `Duplicate check name '${check.name}' (also on line ${first})` });
+    }
+  }
 
   collector.throwIfAny();
 

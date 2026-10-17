@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- CHECK constraints: the column setting ``check: `<expression>` `` (named `<table>_<column>_check`)
+  and a table `checks { }` block with one `` `<expression>` [name: '<name>'] `` per line. Each
+  becomes `check(name, sql`…`)` in the generated schema; `db-patch.dbml` keeps them unchanged.
+
 ## 3.0.0
 
 The package is renamed **dbml2drizzle**. It now generates a Drizzle ORM schema from DBML, and

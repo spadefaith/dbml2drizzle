@@ -24,6 +24,11 @@ const action = (value) => JSON.stringify(String(value).toLowerCase());
 const actionOptions = ({ onDelete, onUpdate }) =>
   [onDelete && `onDelete: ${action(onDelete)}`, onUpdate && `onUpdate: ${action(onUpdate)}`].filter(Boolean);
 
+/**
+ * `text` escaped for a template literal, so the SQL keeps it exactly.
+ */
+const templateText = (text) => text.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+
 const sorted = (set) => [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
 /**
@@ -122,6 +127,12 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
 
       builders.add(builder);
       extra.push(`${builder}(${JSON.stringify(index.name)})${target}`);
+    }
+
+    for (const check of table.checks) {
+      builders.add(dialect.checkBuilder);
+      ormImports.add("sql");
+      extra.push(`${dialect.checkBuilder}(${JSON.stringify(check.name)}, sql\`${templateText(check.expression)}\`)`);
     }
 
     lines.push(extra.length ? `}, (t) => [\n${extra.map((item) => `  ${item},`).join("\n")}\n]);` : "});");

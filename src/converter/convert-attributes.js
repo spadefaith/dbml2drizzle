@@ -15,6 +15,7 @@ const COLUMN_SETTINGS = [
   "ref",
   "delete",
   "update",
+  "check",
 ];
 
 const RENAMED_FROM_MESSAGE =
@@ -59,12 +60,13 @@ function parseInlineRef(value, location, collector) {
 
 /**
  * Turns parsed column lines of one table into data-model.md Columns and raw
- * inline references:
+ * inline references, plus the raw `check:` settings ([{ column, value, line }]):
  * { from: { table, columns: [column] }, op, to, onDelete, onUpdate, line, form: "inline" }
  */
 module.exports = function convertAttributes(table, columnLines, collector) {
   const columns = [];
   const rawRefs = [];
+  const columnChecks = [];
 
   for (const columnLine of columnLines) {
     const { name, typeRaw, settings, line } = columnLine;
@@ -102,6 +104,7 @@ module.exports = function convertAttributes(table, columnLines, collector) {
       if (key == "unique") column.unique = true;
       if (key == "delete") onDelete = String(value).toUpperCase();
       if (key == "update") onUpdate = String(value).toUpperCase();
+      if (key == "check") columnChecks.push({ column: name, value, line });
 
       if (key == "default" && type) {
         column.defaultValue = resolveDefault(value, type);
@@ -134,7 +137,7 @@ module.exports = function convertAttributes(table, columnLines, collector) {
     columns.push(column);
   }
 
-  return { columns, rawRefs };
+  return { columns, rawRefs, columnChecks };
 };
 
 module.exports.RENAMED_FROM_MESSAGE = RENAMED_FROM_MESSAGE;
