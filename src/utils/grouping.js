@@ -3,7 +3,8 @@ const scanText = require("./scan-line");
 /**
  * Groups scanned DBML lines into a tree of blocks.
  *
- * A block is { header, line, raw, items, blocks } where `header` is the code
+ * A block is { header, line, endLine, raw, items, blocks } where `endLine` is
+ * the line that closes it, and `header` is the code
  * before "{" (e.g. "Table users", "indexes", "Note:"), `items` are the lines
  * inside it ({ text, raw, line, commentIndex }) and `blocks` are nested
  * blocks. Lines outside any block (e.g. standalone `Ref:` lines) are returned
@@ -83,17 +84,18 @@ module.exports = function grouping(text, collector) {
       current().blocks.push({
         header: oneLiner[1].trim(),
         line,
+        endLine: line,
         raw,
         items: inner ? [item(scanned, inner)] : [],
         blocks: [],
       });
     } else if (code == "}") {
       stack.length > 1
-        ? stack.pop()
+        ? (stack.pop().endLine = line)
         : collector.add({ message: "Unexpected '}'", line });
     } else if (scanned.closes > scanned.opens && code.endsWith("}")) {
       current().items.push(item(scanned, code.substring(0, code.length - 1).trim()));
-      stack.length > 1 && stack.pop();
+      stack.length > 1 && (stack.pop().endLine = line);
     } else {
       current().items.push(item(scanned, code));
     }

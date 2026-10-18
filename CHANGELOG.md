@@ -12,9 +12,16 @@
 - Partial indexes: the index setting ``where: `<condition>` `` becomes `.where(sql`…`)`. In
   `db-patch.dbml` the condition moves into the entry's note, since standard DBML has no `where`.
 
+- Shared enums: top-level `Enum name { … }` blocks, used by any number of columns through their
+  type name. Each becomes one `pgEnum` named as the block; block and value notes become its JSDoc.
+  In `db-patch.dbml` a `Note` inside an `Enum` moves onto its first value, since standard DBML
+  rejects a note on an `Enum`.
+
 ### Changed
 
 - The error `Expression indexes are not supported` is gone.
+- The error `Enum blocks are not supported; use an inline enum('a','b') type` is gone.
+- `parseSchema()` returns an `enums` array.
 
 ## 3.0.0
 

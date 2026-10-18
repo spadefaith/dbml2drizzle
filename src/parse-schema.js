@@ -171,7 +171,8 @@ module.exports = function parseSchema(text) {
       continue;
     }
 
-    const parsed = parseEnum(block, definition, collector);
+    const { enum: parsed, patchEdits: enumEdits } = parseEnum(block, definition, collector);
+    patchEdits = patchEdits.concat(enumEdits);
     const first = enumsByName.get(parsed.name);
 
     if (first) {

@@ -205,7 +205,7 @@ Table accounts {
 }
 ```
 
-Each enum column gets its own PostgreSQL enum type, named `enum_<table>_<column>`. It is declared once, before the tables:
+**Inline enums.** Each `enum(...)` column gets its own PostgreSQL enum type, named `enum_<table>_<column>`. It is declared once, before the tables:
 
 ```ts
 export const enum_accounts_status = pgEnum("enum_accounts_status", ["active", "closed"]);
@@ -215,7 +215,39 @@ export const accounts = pgTable("accounts", {
 });
 ```
 
-Standalone `Enum { }` blocks are not supported. Use the inline `enum(...)` type.
+**Shared enums.** An `Enum` block declares one enum type that any number of columns use by its name:
+
+```dbml
+Table orders {
+  status order_status [not null, default: 'new']
+}
+
+Table order_events {
+  status order_status
+}
+
+Enum order_status {
+  Note: 'Lifecycle of an order'
+  new
+  "in progress" [note: 'being packed']
+  shipped
+}
+```
+
+```ts
+/**
+ * Lifecycle of an order
+ * in progress: being packed
+ */
+export const order_status = pgEnum("order_status", ["new", "in progress", "shipped"]);
+```
+
+- The database type has exactly the block's name; the block can come before or after the tables that use it.
+- A column uses the enum when its type is the enum's name (case-sensitive, no arguments).
+- Values are bare words or `"double-quoted"`, each optionally `[note: '…']`; the block may have a `Note`. The notes become the JSDoc comment above the enum.
+- A column default must be one of the enum's values.
+- Every `Enum` block is declared, even if no column uses it. Shared enums come first, in file order, then inline enums.
+- Not supported: schema-qualified names (`Enum sales.status`), and an enum named like a built-in type, a table or an inline enum's `enum_<table>_<column>`.
 
 ### Notes
 
@@ -470,7 +502,11 @@ The whole file is checked before anything is written. Every problem is reported 
 | `Table '<table>' declares its primary key twice` | Column-level and index-level `pk` in one table. |
 | `Relation '<name>' collides with a column or relation of '<table>'` | See [Relations](#relations). |
 | `Table name '<a>' and '<b>' both become '<id>' in generated code` | See [identifiers](#the-generated-schema). |
-| `Enum blocks are not supported; use an inline enum('a','b') type` | A standalone `Enum { }` block. |
+| `Duplicate enum '<name>' (also on line <n>)` / `Enum '<name>' has no values` / `Duplicate value '<value>' in enum '<name>'` / `Unknown enum value setting '<setting>'` | Problems inside `Enum` blocks. |
+| `Enum '<name>' has the name of a built-in type` / `Schema-qualified enum names are not supported: '<name>'` | An enum name that cannot be used. |
+| `Enum '<name>' has the same name as table '<name>' (line <n>)` / `Enum '<name>' has the same name as the enum type of <table>.<column> (line <n>)` | An enum name already taken in the database. |
+| `Default '<value>' is not a value of enum '<name>' (…)` | A default outside the column's enum. |
+| `Enum name '<a>' and '<b>' both become '<id>' in generated code` | Two enum names that become the same identifier. |
 | `Duplicate table` / `Duplicate column` / `Table has no columns` | As described. |
 | `Unknown block '<word>'` / `'<block>' must be inside a Table` / `'<block>' is not allowed inside a Table` | A block in the wrong place. |
 | `Block '<header>' is missing its closing '}'` / `Unexpected '}'` / `Unexpected line '<text>'` | Unbalanced braces or stray text. |
@@ -481,7 +517,7 @@ The package checks the **DBML**: syntax, types, references, conflicting declarat
 
 ## Documentation with dbdocs
 
-Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject three parts of this project's dialect: `delete:` / `update:` inside a column's settings, `Note: {` blocks, and `where:` on an index. The `patch` command writes a copy they accept:
+Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject four parts of this project's dialect: `delete:` / `update:` inside a column's settings, `Note: {` blocks, `where:` on an index, and a `Note` inside an `Enum`. The `patch` command writes a copy they accept:
 
 ```bash
 npx dbml2drizzle patch db/db.dbml          # → db/db-patch.dbml
@@ -492,6 +528,7 @@ npx dbdocs build ./db/db-patch.dbml
 |---|---|
 | `account_id integer [ref: > accounts.id, delete: cascade, not null] // owner` | `account_id integer [not null] // owner`, plus `Ref: orders.account_id > accounts.id [delete: cascade]` at the end of the file |
 | `Note: {` | `Note {` |
+| `Enum s { Note: 'Lifecycle'` … `new` … `}` | the `Note` is removed and moved onto the first value: `new [note: 'Lifecycle']`; if that value has a note, `'Lifecycle (its note)'` |
 | ``email [unique, where: `deleted_at is null`, note: 'active users']`` | `email [unique, note: 'active users (where deleted_at is null)']`; without a note, `note: 'where …'` is added |
 | everything else | copied unchanged |
 

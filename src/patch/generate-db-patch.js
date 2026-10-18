@@ -20,6 +20,15 @@ module.exports = function generateDbPatch(dbmlText) {
     edit.replacement != undefined && (lines[edit.line - 1] = edit.replacement);
   }
 
+  // removals win over replacements of the same line (e.g. `Note: {` inside an Enum)
+  for (const edit of patchEdits) {
+    edit.remove && (lines[edit.line - 1] = null);
+  }
+
+  const kept = lines.filter((line) => line !== null);
+  lines.length = 0;
+  lines.push(...kept);
+
   const refs = patchEdits.filter((edit) => edit.appendRef).map((edit) => edit.appendRef);
 
   if (!refs.length) {

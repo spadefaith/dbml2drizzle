@@ -187,22 +187,42 @@ test("partial indexes keep their condition in the note; expression indexes are c
   assert.doesNotThrow(() => new Parser().parse(output, "dbmlv2"));
 });
 
-test("Enum blocks are copied unchanged", () => {
+test("an Enum's note moves onto its first value, since standard DBML rejects it", () => {
   const source = `Table orders {
   id integer [pk]
   status order_status [not null, default: 'new']
+  kind kind
 }
 
 Enum order_status {
   Note: 'Lifecycle of an order'
-  new
+  new // first
   "in progress" [note: 'being packed']
   shipped
 }
+
+Enum kind {
+  Note: {
+    'Where it\\'s from'
+  }
+  "web shop" [note: 'online']
+}
 `;
   const output = generateDbPatch(source);
-  const values = new Parser().parse(output, "dbmlv2").schemas[0].enums[0].values.map((value) => value.name);
+  const enums = new Parser().parse(output, "dbmlv2").schemas[0].enums;
 
-  assert.equal(output, source);
-  assert.deepEqual(values, ["new", "in progress", "shipped"]);
+  assert.equal(
+    output,
+    source
+      .replace("  Note: 'Lifecycle of an order'\n", "")
+      .replace("  new // first", "  new [note: 'Lifecycle of an order'] // first")
+      .replace("  Note: {\n    'Where it\\'s from'\n  }\n", "")
+      .replace(`"web shop" [note: 'online']`, `"web shop" [note: 'Where it\\'s from (online)']`),
+  );
+  assert.deepEqual(enums[0].values.map((value) => [value.name, value.note]), [
+    ["new", "Lifecycle of an order"],
+    ["in progress", "being packed"],
+    ["shipped", null],
+  ]);
+  assert.equal(enums[1].values[0].note, "Where it's from (online)");
 });
