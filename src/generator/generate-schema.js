@@ -122,11 +122,15 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
 
     for (const index of table.indexes) {
       const builder = index.unique ? "uniqueIndex" : "index";
-      const columns = index.fields.map((field) => member("t", field)).join(", ");
+      const columns = index.parts
+        .map((part) => ("column" in part ? member("t", part.column) : `sql\`${templateText(part.expression)}\``))
+        .join(", ");
       const target = index.using ? `.using(${JSON.stringify(index.using.toLowerCase())}, ${columns})` : `.on(${columns})`;
+      const where = index.where ? `.where(sql\`${templateText(index.where)}\`)` : "";
 
+      (where || index.parts.some((part) => "expression" in part)) && ormImports.add("sql");
       builders.add(builder);
-      extra.push(`${builder}(${JSON.stringify(index.name)})${target}`);
+      extra.push(`${builder}(${JSON.stringify(index.name)})${target}${where}`);
     }
 
     for (const check of table.checks) {

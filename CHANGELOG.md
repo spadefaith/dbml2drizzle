@@ -7,6 +7,14 @@
 - CHECK constraints: the column setting ``check: `<expression>` `` (named `<table>_<column>_check`)
   and a table `checks { }` block with one `` `<expression>` [name: '<name>'] `` per line. Each
   becomes `check(name, sql`…`)` in the generated schema; `db-patch.dbml` keeps them unchanged.
+- Expression indexes: backtick expressions in `indexes { }`, alone or among columns (a `name:` is
+  required). They become `sql`…`` index parts; `db-patch.dbml` keeps them unchanged.
+- Partial indexes: the index setting ``where: `<condition>` `` becomes `.where(sql`…`)`. In
+  `db-patch.dbml` the condition moves into the entry's note, since standard DBML has no `where`.
+
+### Changed
+
+- The error `Expression indexes are not supported` is gone.
 
 ## 3.0.0
 

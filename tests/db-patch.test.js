@@ -160,3 +160,29 @@ test("checks are kept unchanged and the standard parser reads them", () => {
   assert.equal(table.checks[0].name, "events_valid_range");
   assert.equal(table.checks[0].expression, "ends_at > starts_at");
 });
+
+test("partial indexes keep their condition in the note; expression indexes are copied", () => {
+  const source = `Table users {
+  id integer [pk]
+  email varchar(255) [not null]
+  deleted_at timestamptz
+  prefs jsonb
+  name text
+
+  indexes {
+    \`lower(email)\` [unique, name: 'users_email_ci']
+    email [unique, where: \`deleted_at is null\`, note: 'active users']
+    \`(prefs -> 'tags')\` [type: gin, name: 'users_tags', where: \`prefs is not null\`] // tags
+    name [where: \`name <> 'x'\`]
+  }
+}
+`;
+  const output = generateDbPatch(source);
+  const expected = source
+    .replace("email [unique, where: `deleted_at is null`, note: 'active users']", "email [unique, note: 'active users (where deleted_at is null)']")
+    .replace("[type: gin, name: 'users_tags', where: `prefs is not null`] // tags", "[type: gin, name: 'users_tags', note: 'where prefs is not null'] // tags")
+    .replace("name [where: `name <> 'x'`]", "name [note: 'where name <> \\'x\\'']");
+
+  assert.equal(output, expected);
+  assert.doesNotThrow(() => new Parser().parse(output, "dbmlv2"));
+});

@@ -59,8 +59,13 @@ test("names indexes as declared or <table>_<field>_<field>", () => {
   const orders = parseSchema(dbml).tables[1];
 
   assert.deepEqual(orders.indexes, [
-    { fields: ["customer_id"], name: "orders_customer_id" },
-    { fields: ["customer_id", "placed_at"], name: "orders_by_customer", unique: true },
+    { fields: ["customer_id"], parts: [{ column: "customer_id" }], name: "orders_customer_id" },
+    {
+      fields: ["customer_id", "placed_at"],
+      parts: [{ column: "customer_id" }, { column: "placed_at" }],
+      name: "orders_by_customer",
+      unique: true,
+    },
   ]);
 });
 

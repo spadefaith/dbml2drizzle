@@ -310,7 +310,10 @@ Table orders {
 
 - **Index name**: the declared `name:`, otherwise `<table>_<column>_<column>…`.
 - **Composite primary key**: an index entry marked `pk`, such as `(order_id, line_no) [pk]`. It becomes `primaryKey({ columns: [t.order_id, t.line_no] })` rather than an index. Declaring a primary key both on a column and in `indexes` is an error.
-- **Not supported**: expression indexes (backticks) and partial indexes. Write them by hand in a custom migration (`drizzle-kit generate --custom`).
+- **Expression indexes**: write an expression in backticks, alone or among columns, in the order you want: `` `lower(email)` [unique, name: 'users_email_ci'] `` or `` (`lower(email)`, created_at) [name: 'users_email_created'] ``. It becomes ``.on(sql`lower(email)`, t.created_at)``. An entry with an expression needs a `name:`. The expression is copied as written; PostgreSQL needs parentheses around anything that is not a function call, so write `` `(prefs -> 'tags')` ``, not `` `prefs -> 'tags'` ``.
+- **Partial indexes**: ``where: `<condition>` `` limits the index to matching rows: ``email [unique, where: `deleted_at is null`]`` becomes ``uniqueIndex("users_email").on(t.email).where(sql`deleted_at is null`)``. It works with `unique`, `name`, `type` and expressions, but not with `pk`.
+- In expressions and conditions, write `` \` `` for a backtick. Nothing in them is validated; the database reports invalid SQL.
+- **Not supported**: `concurrently`, sort order (`desc`, `nulls first`), operator classes and `with (...)` storage parameters. Write them by hand in a custom migration (`drizzle-kit generate --custom`).
 
 ### Check constraints
 
@@ -454,7 +457,10 @@ The whole file is checked before anything is written. Every problem is reported 
 | `Composite reference sides have different column counts` | `Ref: a.(x) > b.(x, y)` |
 | `Conflicting declarations of A → B (lines n and m)` | The same relationship declared twice, differently. |
 | `Unknown reference setting '<setting>'` | A `Ref:` setting other than `delete`, `update`, `color`. |
-| `Index refers to unknown column '<column>'` / `Unknown index setting '<setting>'` / `Expression indexes are not supported` | Index problems. |
+| `Index refers to unknown column '<column>'` / `Unknown index setting '<setting>'` | Index problems. |
+| `Expression indexes need a name, e.g. [name: '…']` / `Index expression is empty` | An expression index without `name`, or `` `` `` as an index part. |
+| ``where must be a backtick expression, e.g. where: `deleted_at is null` `` / `Index condition is empty` / `An index takes one where condition` | A malformed or repeated `where:`. |
+| `A primary key cannot have an expression or a where condition` | `pk` together with an expression or `where:` in `indexes`. |
 | ``check must be a backtick expression, e.g. check: `price >= 0` `` / `Check must be a backtick expression` | A quoted string instead of a backtick expression. |
 | `Check expression is empty` | ``check: `` `` or an empty `checks` entry. |
 | `A column takes one check; use a table checks { } block for more` | Two `check:` settings on one column. |
@@ -475,7 +481,7 @@ The package checks the **DBML**: syntax, types, references, conflicting declarat
 
 ## Documentation with dbdocs
 
-Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject two parts of this project's dialect: `delete:` / `update:` inside a column's settings, and `Note: {` blocks. The `patch` command writes a copy they accept:
+Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject three parts of this project's dialect: `delete:` / `update:` inside a column's settings, `Note: {` blocks, and `where:` on an index. The `patch` command writes a copy they accept:
 
 ```bash
 npx dbml2drizzle patch db/db.dbml          # → db/db-patch.dbml
@@ -486,6 +492,7 @@ npx dbdocs build ./db/db-patch.dbml
 |---|---|
 | `account_id integer [ref: > accounts.id, delete: cascade, not null] // owner` | `account_id integer [not null] // owner`, plus `Ref: orders.account_id > accounts.id [delete: cascade]` at the end of the file |
 | `Note: {` | `Note {` |
+| ``email [unique, where: `deleted_at is null`, note: 'active users']`` | `email [unique, note: 'active users (where deleted_at is null)']`; without a note, `note: 'where …'` is added |
 | everything else | copied unchanged |
 
 - Moved references are appended under the comment `// Relationships moved from inline settings by dbml2drizzle`.

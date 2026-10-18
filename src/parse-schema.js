@@ -119,7 +119,7 @@ function parseTable(block, definition, collector) {
   }
 
   const { columns, rawRefs, columnChecks } = convertAttributes(name, columnLines, collector);
-  const { indexes, primaryKeys } = convertIndexes(name, columns, indexLines, collector);
+  const { indexes, primaryKeys, patchEdits: indexEdits } = convertIndexes(name, columns, indexLines, collector);
 
   if (primaryKeys.length) {
     const hasColumnPk = columns.some((column) => column.primaryKey);
@@ -142,7 +142,7 @@ function parseTable(block, definition, collector) {
   return {
     table: { name, comment, columns, indexes, checks, line: block.line },
     rawRefs,
-    patchEdits: columnLines.flatMap((columnLine) => columnLineEdits(name, columnLine)),
+    patchEdits: [...columnLines.flatMap((columnLine) => columnLineEdits(name, columnLine)), ...indexEdits],
   };
 }
 
