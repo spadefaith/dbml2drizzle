@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
 const { generateSchema, writeSchema, dialects } = require("../src");
+const { getDialect } = require("../src/dialects");
 const { writeTemp } = require("./helpers");
 
 const dbml = "Table users {\n  id int [pk]\n}\n";
@@ -13,12 +14,17 @@ test("pg is the default dialect", () => {
 
 test("an unsupported dialect lists the supported ones", () => {
   assert.throws(() => generateSchema(dbml, { dialect: "mysql" }), {
-    message: "Unsupported dialect 'mysql'. Supported: pg",
+    message: "Unsupported dialect 'mysql'. Supported: pg, d1",
   });
 });
 
 test("dialects lists the registered targets", () => {
-  assert.deepEqual(dialects, ["pg"]);
+  assert.deepEqual(dialects, ["pg", "d1"]);
+});
+
+test("d1 is selected with { dialect: \"d1\" }", () => {
+  assert.equal(getDialect("d1").id, "d1");
+  assert.match(generateSchema(dbml, { dialect: "d1" }), /sqliteTable\("users"/);
 });
 
 test("writeSchema writes nothing for an unsupported dialect", () => {

@@ -3,6 +3,7 @@ const { createCollector } = require("../errors");
 const { getDialect } = require("../dialects");
 const { propertyKey, member, tableExports } = require("./identifiers");
 const buildRelations = require("./relations");
+const { findEnum } = require("./collect-enums");
 
 /**
  * A note as a JSDoc comment, with `*\/` escaped so it cannot end the comment.
@@ -59,7 +60,7 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
   }
 
   const exports = tableExports(schema.tables, collector, enumExports);
-  enums.length && builders.add(dialect.enumBuilder);
+  enums.length && dialect.enumBuilder && builders.add(dialect.enumBuilder);
 
   const tableBlocks = schema.tables.map((table) => {
     const own = exports.get(table.name);
@@ -72,25 +73,24 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
 
     for (const column of table.columns) {
       const location = { table: table.name, column: column.name, line: column.line };
-      const enumDef = column.type && column.type.ref
-        ? enums.find((e) => e.ref == column.type.ref)
-        : enums.find((e) => e.table == table.name && e.column == column.name);
-      let call;
+      const enumDef = findEnum(enums, table, column);
+      const result = !enumDef
+        ? dialect.columnCall(column, location, collector, table)
+        : dialect.enumColumnCall
+          ? dialect.enumColumnCall(enumDef, column, location, collector, table)
+          : { builders: [], text: `${enumDef.exportName}(${JSON.stringify(column.name)})` };
 
-      if (enumDef) {
-        call = `${enumDef.exportName}(${JSON.stringify(column.name)})`;
-      } else {
-        const result = dialect.columnCall(column, location, collector);
-
-        if (!result) {
-          continue;
-        }
-
-        result.builders.forEach((builder) => builders.add(builder));
-        call = result.text;
+      if (!result) {
+        continue;
       }
 
-      if (pkColumns.length == 1 && column.primaryKey) call += ".primaryKey()";
+      result.builders.forEach((builder) => builders.add(builder));
+      let call = result.text;
+
+      if (pkColumns.length == 1 && column.primaryKey) {
+        call += dialect.primaryKeyModifier ? dialect.primaryKeyModifier(column) : ".primaryKey()";
+      }
+
       if (column.allowNull === false) call += ".notNull()";
       if (column.unique) call += ".unique()";
 
@@ -135,6 +135,16 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
     }
 
     for (const index of table.indexes) {
+      // index entries carry no line, so the table's line locates the error
+      if (index.using && dialect.indexTypes === false) {
+        collector.add({
+          table: table.name,
+          line: table.line,
+          message: `Index type '${index.using}' is not supported on ${dialect.label || dialect.id}`,
+        });
+        continue;
+      }
+
       const builder = index.unique ? "uniqueIndex" : "index";
       const columns = index.parts
         .map((part) => ("column" in part ? member("t", part.column) : `sql\`${templateText(part.expression)}\``))
@@ -148,6 +158,24 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
     }
 
     for (const check of table.checks) {
+      builders.add(dialect.checkBuilder);
+      ormImports.add("sql");
+      extra.push(`${dialect.checkBuilder}(${JSON.stringify(check.name)}, sql\`${templateText(check.expression)}\`)`);
+    }
+
+    // checks the dialect generates (e.g. D1 enum checks), after the declared ones
+    for (const check of dialect.tableChecks ? dialect.tableChecks(table, enums) : []) {
+      if (table.checks.some((declared) => declared.name == check.name)) {
+        const column = table.columns.find((item) => item.name == check.column);
+        collector.add({
+          table: table.name,
+          column: check.column,
+          line: column && column.line,
+          message: `Check name '${check.name}' is declared and also generated for enum column ${table.name}.${check.column}`,
+        });
+        continue;
+      }
+
       builders.add(dialect.checkBuilder);
       ormImports.add("sql");
       extra.push(`${dialect.checkBuilder}(${JSON.stringify(check.name)}, sql\`${templateText(check.expression)}\`)`);

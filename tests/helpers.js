@@ -26,13 +26,15 @@ let loaded = 0;
 /**
  * Imports generated schema source as an ES module. The file is written
  * inside the repository so that `drizzle-orm` resolves, and removed after.
+ * The only TypeScript syntax the generator emits, `as const` on D1 enum
+ * values, is removed so the source runs as JavaScript.
  */
 async function loadGenerated(text) {
   const dir = path.join(__dirname, "..", "tmp", "generated");
   const file = path.join(dir, `schema-${process.pid}-${++loaded}.mjs`);
 
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(file, text);
+  fs.writeFileSync(file, text.replace(/ as const;$/gm, ";"));
 
   try {
     return await import(pathToFileURL(file).href);
@@ -52,4 +54,18 @@ async function sqlFor(text) {
   return statements.join("\n");
 }
 
-module.exports = { writeTemp, generate, loadGenerated, sqlFor };
+/**
+ * SQLite (Cloudflare D1) statements drizzle-kit generates for the schema
+ * source, starting from an empty database.
+ */
+async function sqliteSqlFor(text) {
+  const api = await import("drizzle-kit/api");
+  const module = await loadGenerated(text);
+  const statements = await api.generateSQLiteMigration(
+    await api.generateSQLiteDrizzleJson({}),
+    await api.generateSQLiteDrizzleJson(module)
+  );
+  return statements.join("\n");
+}
+
+module.exports = { writeTemp, generate, loadGenerated, sqlFor, sqliteSqlFor };

@@ -7,6 +7,7 @@ const { collectEnums, enumDeclaration } = require("./enums");
  */
 module.exports = {
   id: "pg",
+  label: "PostgreSQL",
   module: "drizzle-orm/pg-core",
   tableBuilder: "pgTable",
   enumBuilder: "pgEnum",

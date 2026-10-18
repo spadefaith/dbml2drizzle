@@ -17,6 +17,13 @@
   In `db-patch.dbml` a `Note` inside an `Enum` moves onto its first value, since standard DBML
   rejects a note on an `Enum`.
 
+- Cloudflare D1 target: `--dialect d1` / `{ dialect: "d1" }` writes a `drizzle-orm/sqlite-core`
+  schema for drizzle-kit's `sqlite` dialect with the `d1-http` driver. Decimals and dates are
+  stored as text; enums are declared once as `as const` value arrays, used as
+  `text("c", { enum })` and enforced by a generated check `<table>_<column>_enum`. `increment` is
+  allowed only on the single integer primary key, and index types are errors. `dialects` is now
+  `["pg", "d1"]`. The PostgreSQL output is unchanged.
+
 ### Changed
 
 - The error `Expression indexes are not supported` is gone.

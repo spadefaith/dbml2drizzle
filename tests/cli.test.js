@@ -34,12 +34,23 @@ test("schema honors --out and --dialect pg", () => {
   assert.ok(fs.existsSync(outPath));
 });
 
+test("schema --dialect d1 writes the Cloudflare D1 schema and prints the path", () => {
+  const { dir, file } = writeTemp("db.dbml", users);
+  const result = run("schema", file, "--dialect", "d1");
+  const outPath = path.join(dir, "db.schema.ts");
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), outPath);
+  assert.equal(fs.readFileSync(outPath, "utf8"), generateSchema(users, { dialect: "d1", sourceName: "db.dbml" }));
+  assert.match(fs.readFileSync(outPath, "utf8"), /from "drizzle-orm\/sqlite-core";/);
+});
+
 test("an unsupported dialect exits 2 and writes nothing", () => {
   const { dir, file } = writeTemp("db.dbml", users);
   const result = run("schema", file, "--dialect", "mysql");
 
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /Unsupported dialect 'mysql'\. Supported: pg/);
+  assert.match(result.stderr, /Unsupported dialect 'mysql'\. Supported: pg, d1$/m);
   assert.deepEqual(fs.readdirSync(dir), ["db.dbml"]);
 });
 
@@ -86,4 +97,5 @@ test("--help prints usage and exits 0", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /dbml2drizzle schema <file\.dbml>/);
   assert.match(result.stdout, /dbml2drizzle patch <file\.dbml>/);
+  assert.match(result.stdout, /supported: pg, d1/);
 });

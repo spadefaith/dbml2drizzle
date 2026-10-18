@@ -1,6 +1,7 @@
 const pg = require("./pg");
+const d1 = require("./d1");
 
-const registry = { pg };
+const registry = { pg, d1 };
 
 /**
  * Registered target dialect ids.
