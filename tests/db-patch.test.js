@@ -186,3 +186,23 @@ test("partial indexes keep their condition in the note; expression indexes are c
   assert.equal(output, expected);
   assert.doesNotThrow(() => new Parser().parse(output, "dbmlv2"));
 });
+
+test("Enum blocks are copied unchanged", () => {
+  const source = `Table orders {
+  id integer [pk]
+  status order_status [not null, default: 'new']
+}
+
+Enum order_status {
+  Note: 'Lifecycle of an order'
+  new
+  "in progress" [note: 'being packed']
+  shipped
+}
+`;
+  const output = generateDbPatch(source);
+  const values = new Parser().parse(output, "dbmlv2").schemas[0].enums[0].values.map((value) => value.name);
+
+  assert.equal(output, source);
+  assert.deepEqual(values, ["new", "in progress", "shipped"]);
+});

@@ -63,7 +63,7 @@ function parseInlineRef(value, location, collector) {
  * inline references, plus the raw `check:` settings ([{ column, value, line }]):
  * { from: { table, columns: [column] }, op, to, onDelete, onUpdate, line, form: "inline" }
  */
-module.exports = function convertAttributes(table, columnLines, collector) {
+module.exports = function convertAttributes(table, columnLines, collector, enums = new Map()) {
   const columns = [];
   const rawRefs = [];
   const columnChecks = [];
@@ -77,7 +77,7 @@ module.exports = function convertAttributes(table, columnLines, collector) {
       continue;
     }
 
-    const type = resolveType(typeRaw, location, collector);
+    const type = resolveType(typeRaw, location, collector, enums);
     const column = { name, type, line };
     const refs = [];
     let onDelete;
@@ -108,6 +108,14 @@ module.exports = function convertAttributes(table, columnLines, collector) {
 
       if (key == "default" && type) {
         column.defaultValue = resolveDefault(value, type);
+
+        const { kind, value: defaultValue } = column.defaultValue;
+        if (type.ref && kind == "value" && !type.args.includes(defaultValue)) {
+          collector.add({
+            ...location,
+            message: `Default '${defaultValue}' is not a value of enum '${type.ref}' (${type.args.join(", ")})`,
+          });
+        }
       }
 
       if (key == "ref") {

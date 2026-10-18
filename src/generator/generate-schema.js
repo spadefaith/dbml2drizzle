@@ -45,8 +45,20 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
   const ormImports = new Set();
   const builders = new Set([dialect.tableBuilder]);
 
-  const enums = dialect.collectEnums(schema);
-  const exports = tableExports(schema.tables, collector, new Map(enums.map((e) => [e.exportName, e.dbName])));
+  const enums = dialect.collectEnums(schema, collector);
+  const enumExports = new Map();
+
+  for (const e of enums) {
+    const other = enumExports.get(e.exportName);
+    other != undefined && other != e.dbName &&
+      collector.add({
+        line: e.line,
+        message: `Enum name '${other}' and '${e.dbName}' both become '${e.exportName}' in generated code`,
+      });
+    other == undefined && enumExports.set(e.exportName, e.dbName);
+  }
+
+  const exports = tableExports(schema.tables, collector, enumExports);
   enums.length && builders.add(dialect.enumBuilder);
 
   const tableBlocks = schema.tables.map((table) => {
@@ -60,7 +72,9 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
 
     for (const column of table.columns) {
       const location = { table: table.name, column: column.name, line: column.line };
-      const enumDef = enums.find((e) => e.table == table.name && e.column == column.name);
+      const enumDef = column.type && column.type.ref
+        ? enums.find((e) => e.ref == column.type.ref)
+        : enums.find((e) => e.table == table.name && e.column == column.name);
       let call;
 
       if (enumDef) {

@@ -12,6 +12,7 @@ const convertChecks = require("./converter/convert-checks");
 const convertNote = require("./converter/convert-note");
 const resolveRelationships = require("./converter/resolve-relationships");
 const parseRefLine = require("./parser/parse-ref-line");
+const parseEnum = require("./parser/parse-enum");
 const { cleanNote } = convertNote;
 const { RENAMED_FROM_MESSAGE } = convertAttributes;
 
@@ -61,7 +62,7 @@ function noteBlockEdits(blocks) {
   ]);
 }
 
-function parseTable(block, definition, collector) {
+function parseTable(block, definition, collector, enums) {
   const name = definition.name;
   const columnLines = [];
   let comment = "";
@@ -118,7 +119,7 @@ function parseTable(block, definition, collector) {
     collector.add({ table: name, line: block.line, message: "Table has no columns" });
   }
 
-  const { columns, rawRefs, columnChecks } = convertAttributes(name, columnLines, collector);
+  const { columns, rawRefs, columnChecks } = convertAttributes(name, columnLines, collector, enums);
   const { indexes, primaryKeys, patchEdits: indexEdits } = convertIndexes(name, columns, indexLines, collector);
 
   if (primaryKeys.length) {
@@ -149,7 +150,7 @@ function parseTable(block, definition, collector) {
 /**
  * Parses DBML text into the schema description (see
  * specs/001-dbml-to-migration/data-model.md):
- * { tables, relationships, patchEdits }.
+ * { tables, enums, relationships, patchEdits }.
  * Throws one DbmlError listing every problem found.
  */
 module.exports = function parseSchema(text) {
@@ -158,11 +159,34 @@ module.exports = function parseSchema(text) {
   const tables = [];
   let patchEdits = noteBlockEdits(blocks);
   let rawRefs = [];
+  const enums = [];
+  const enumsByName = new Map();
+  const definitions = new Map(blocks.map((block) => [block, parseDefinitionType(block, collector)]));
+
+  // Enum blocks first, so columns can use an enum declared later in the file
+  for (const block of blocks) {
+    const definition = definitions.get(block);
+
+    if (!definition || definition.type != "Enum") {
+      continue;
+    }
+
+    const parsed = parseEnum(block, definition, collector);
+    const first = enumsByName.get(parsed.name);
+
+    if (first) {
+      collector.add({ line: block.line, message: `Duplicate enum '${parsed.name}' (also on line ${first.line})` });
+      continue;
+    }
+
+    enums.push(parsed);
+    enumsByName.set(parsed.name, parsed);
+  }
 
   for (const block of blocks) {
-    const definition = parseDefinitionType(block, collector);
+    const definition = definitions.get(block);
 
-    if (!definition) {
+    if (!definition || definition.type == "Enum") {
       continue;
     }
 
@@ -172,7 +196,7 @@ module.exports = function parseSchema(text) {
         continue;
       }
 
-      const parsed = parseTable(block, definition, collector);
+      const parsed = parseTable(block, definition, collector, enumsByName);
       tables.push(parsed.table);
       rawRefs = rawRefs.concat(parsed.rawRefs);
       patchEdits = patchEdits.concat(parsed.patchEdits);
@@ -196,6 +220,11 @@ module.exports = function parseSchema(text) {
   }
 
   const relationships = resolveRelationships(rawRefs, tables, collector);
+
+  for (const { name, line } of enums) {
+    const table = tables.find((item) => item.name == name);
+    table && collector.add({ line, message: `Enum '${name}' has the same name as table '${name}' (line ${table.line})` });
+  }
   const checkLinesByName = new Map();
 
   for (const { name: table, checks } of tables) {
@@ -211,5 +240,5 @@ module.exports = function parseSchema(text) {
 
   patchEdits.sort((a, b) => a.line - b.line);
 
-  return { tables, relationships, patchEdits };
+  return { tables, enums, relationships, patchEdits };
 };

@@ -1,4 +1,4 @@
-const BLOCK_TYPES = ["Table", "Project", "TableGroup", "Ref", "indexes", "checks", "Note"];
+const BLOCK_TYPES = ["Table", "Enum", "Project", "TableGroup", "Ref", "indexes", "checks", "Note"];
 
 function unquote(name) {
   return name.replace(/^"(.*)"$/, "$1");
@@ -13,14 +13,6 @@ module.exports = function parseDefinitionType(block, collector) {
   const header = block.header;
   const match = header.match(/^(\w+):?\s*(.*)$/s);
   const word = match ? match[1] : header;
-
-  if (/^enum$/i.test(word)) {
-    collector.add({
-      message: "Enum blocks are not supported; use an inline enum('a','b') type",
-      line: block.line,
-    });
-    return null;
-  }
 
   const type = BLOCK_TYPES.find((name) => name.toLowerCase() == word.toLowerCase());
 
@@ -40,6 +32,11 @@ module.exports = function parseDefinitionType(block, collector) {
 
   // "Table users as U" -> "users"
   const name = unquote(rest.split(/\s+as\s+/i)[0].trim());
+
+  if (type == "Enum" && !name) {
+    collector.add({ message: "Enum is missing its name", line: block.line });
+    return null;
+  }
 
   if (type == "Table" && !name) {
     collector.add({ message: "Table is missing its name", line: block.line });

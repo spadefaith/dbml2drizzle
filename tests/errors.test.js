@@ -48,12 +48,6 @@ test("every problem in the DBML is reported together, in line order", () => {
         { line: 6, table: "a", column: "owner_id", message: "References unknown table 'owners'" },
         { line: 7, table: "a", column: "b_id", message: "References unknown column 'b.missing'" },
         { line: 10, table: "a", column: "nope", message: "Index refers to unknown column 'nope'" },
-        {
-          line: 18,
-          table: undefined,
-          column: undefined,
-          message: "Enum blocks are not supported; use an inline enum('a','b') type",
-        },
         { line: 27, table: "c", column: undefined, message: "Table 'c' declares its primary key twice" },
       ]
     );
