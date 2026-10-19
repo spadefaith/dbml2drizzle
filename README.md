@@ -98,8 +98,26 @@ dbml2drizzle --help
 
 ## JavaScript API
 
+The package works in CommonJS and ES module projects:
+
 ```js
+// CommonJS
 const { generateSchema, writeSchema, generateDbPatch, writeDbPatch, parseSchema, dialects, DbmlError } = require("dbml2drizzle");
+
+// ES modules
+import { generateSchema, writeSchema, generateDbPatch, writeDbPatch, parseSchema, dialects, DbmlError } from "dbml2drizzle";
+
+// either, loaded on demand
+const { generateSchema } = await import("dbml2drizzle");
+```
+
+Both give the same objects, so `error instanceof DbmlError` holds however the package was loaded.
+
+**TypeScript**: type declarations are included, for projects that compile to CommonJS or to ES modules. `dialect` is typed as `"pg" | "d1"`, `parseSchema` returns a typed `Schema`, and `DbmlError` works as a value (`instanceof`) and as a type. The types are exported too:
+
+```ts
+import { generateSchema, DbmlError } from "dbml2drizzle";
+import type { DialectId, ErrorEntry, Schema } from "dbml2drizzle";
 ```
 
 | Function | Returns |
@@ -108,7 +126,7 @@ const { generateSchema, writeSchema, generateDbPatch, writeDbPatch, parseSchema,
 | `writeSchema(dbmlPath, { dialect = "pg", outPath })` | The written path. Nothing is written when the DBML has errors. |
 | `generateDbPatch(dbmlText)` | The dbdocs-ready DBML as a string. |
 | `writeDbPatch(dbmlPath, { outPath })` | The written path. |
-| `parseSchema(dbmlText)` | The parsed, dialect-neutral schema description (`{ tables, relationships, patchEdits }`). |
+| `parseSchema(dbmlText)` | The parsed, dialect-neutral schema description (`{ tables, enums, relationships, patchEdits }`). |
 | `dialects` | The supported targets: `["pg", "d1"]`. |
 | `DbmlError` | Thrown for DBML problems. `error.errors` is `[{ line, table, column, message }]`. |
 
@@ -297,6 +315,19 @@ account_id: integer("account_id").notNull().references(() => accounts.id, { onDe
 - Actions: `cascade`, `set null`, `set default`, `restrict`, `no action`.
 - References are lazy (`() => table.column`), so self-references and cycles between tables need no special ordering.
 
+**Self-references and cycles.** TypeScript cannot infer the type of a table whose references lead back to it, either directly (`accounts.created_by → accounts.id`) or through other tables (`departments.manager_id → employees`, `employees.department_id → departments`). Those references get an explicit callback type, `AnyPgColumn` (PostgreSQL) or `AnySQLiteColumn` (D1), imported as a type only when the file needs it:
+
+```ts
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
+
+export const accounts = pgTable("accounts", {
+  id: integer("id").primaryKey(),
+  created_by: integer("created_by").references((): AnyPgColumn => accounts.id, { onDelete: "set null" }),
+});
+```
+
+Every other reference is written as `() => table.column`. The type changes nothing in the database: drizzle-kit generates the same SQL.
+
 **Composite references** are written as standalone references, and become `foreignKey()` in the table's extra config:
 
 ```dbml
@@ -395,7 +426,7 @@ Sections always come in this order, so the same DBML gives a byte-identical file
 - **Column keys**: the database name as is, quoted when it isn't a valid JavaScript identifier (`"first-name": varchar("first-name")`).
 - **Table exports**: the table name, with characters that can't appear in an identifier replaced by `_`. A `_` is prefixed when the name starts with a digit or is a reserved word, so the table `class` is exported as `_class` but stays `pgTable("class", …)`. Two tables that end up with the same export name are an error.
 
-The PostgreSQL output contains no TypeScript type annotations, so it is also valid JavaScript (ESM). The D1 output declares enum values with `as const` (see [Cloudflare D1](#cloudflare-d1)), so a D1 schema with enums is TypeScript only.
+The PostgreSQL output is also valid JavaScript (ESM), unless it contains self-references or reference cycles, whose callbacks are typed (see [Relationships](#relationships-foreign-keys)). A D1 schema with enums (`as const`, see [Cloudflare D1](#cloudflare-d1)) or with such references is TypeScript only.
 
 Don't edit the generated file. Change the DBML and regenerate.
 
@@ -626,13 +657,20 @@ npx dbdocs build ./db/db-patch.dbml
 
 ```bash
 pnpm install
-pnpm test        # node:test; generated schemas are checked through drizzle-kit, no database needed
+pnpm test               # type check (tsc), then node:test; generated schemas are checked through drizzle-kit, no database needed
+pnpm run build:types    # write the type declarations to types/
 ```
 
 Every parser fix and every change to generated output comes with a test that asserts the generated content, using inline DBML strings.
 
+**Types.** The source is CommonJS JavaScript with JSDoc types; files marked `// @ts-check` (the public API, the dialect objects and the parser's entry) are type-checked strictly by `pnpm test`. The declarations in `types/` are generated from that JSDoc (also on `npm pack` / `npm publish`, through `prepack`); they are not committed and must not be edited by hand. Shared types live in `src/types.js`. TypeScript is a development dependency only.
+
+**ES module entry.** `src/index.mjs` only re-exports `src/index.js`, and `package.json` routes `import` to it through `exports`. Keep `module.exports = { … }` in `src/index.js` a literal of shorthand names, so Node.js can read the names. `tests/consumers.test.js` installs the packed package into throw-away CommonJS, ES module and TypeScript projects to check this.
+
 | Path | Purpose |
 |---|---|
+| `src/index.js`, `src/index.mjs` | The public API, for CommonJS and ES modules. |
+| `src/types.js` | Shared JSDoc types (schema description, errors, dialect contract). |
 | `src/parse-schema.js` | The single DBML parser. It produces the schema description that every output reads. |
 | `src/parser/`, `src/utils/` | Line and block parsing. |
 | `src/converter/` | Types (canonical DBML names), defaults, notes, indexes, relationships. |

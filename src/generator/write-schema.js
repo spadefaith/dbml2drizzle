@@ -1,3 +1,4 @@
+// @ts-check
 const fs = require("fs");
 const path = require("path");
 const generateSchema = require("./generate-schema");
@@ -7,6 +8,12 @@ const generateSchema = require("./generate-schema");
  * `<dir>/<base name>.schema.ts` (db.dbml → db.schema.ts). Replaces an
  * existing file, never touches the source, and writes nothing when the DBML
  * has errors. Returns the written path.
+ *
+ * @typedef {{ dialect?: import("../dialects").DialectId, outPath?: string }} WriteSchemaOptions
+ *
+ * @param {string} dbmlPath
+ * @param {WriteSchemaOptions} [opts]
+ * @returns {string}
  */
 module.exports = function writeSchema(dbmlPath, opts = {}) {
   const { dir, name, base } = path.parse(dbmlPath);

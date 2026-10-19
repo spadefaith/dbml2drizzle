@@ -1,3 +1,4 @@
+// @ts-check
 const fs = require("fs");
 const path = require("path");
 const generateDbPatch = require("./generate-db-patch");
@@ -7,6 +8,12 @@ const generateDbPatch = require("./generate-db-patch");
  * `<dir>/<base name>-patch.dbml` (db.dbml → db-patch.dbml). Replaces an
  * existing file, never touches the source, and writes nothing when the DBML
  * has errors. Returns the written path.
+ *
+ * @typedef {{ outPath?: string }} WriteDbPatchOptions
+ *
+ * @param {string} dbmlPath
+ * @param {WriteDbPatchOptions} [opts]
+ * @returns {string}
  */
 module.exports = function writeDbPatch(dbmlPath, opts = {}) {
   const { dir, name } = path.parse(dbmlPath);

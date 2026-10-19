@@ -134,6 +134,9 @@ test/**/*
 # Local output from quickstart checks
 tmp/
 
+# Type declarations, generated from JSDoc (pnpm run build:types, npm pack)
+types/
+
 # OS files
 .DS_Store
 Thumbs.db

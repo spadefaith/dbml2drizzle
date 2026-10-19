@@ -1,3 +1,4 @@
+// @ts-check
 const columnCall = require("./types");
 const defaultModifier = require("./defaults");
 const { collectEnums, enumDeclaration, enumColumnCall, tableChecks } = require("./enums");
@@ -5,6 +6,8 @@ const { collectEnums, enumDeclaration, enumColumnCall, tableChecks } = require("
 /**
  * Cloudflare D1 target (drizzle-orm/sqlite-core; drizzle-kit dialect
  * "sqlite", driver "d1-http").
+ *
+ * @type {import("../../types").Dialect}
  */
 module.exports = {
   id: "d1",
@@ -13,6 +16,7 @@ module.exports = {
   tableBuilder: "sqliteTable",
   enumBuilder: null,
   checkBuilder: "check",
+  anyColumnType: "AnySQLiteColumn",
   columnCall,
   defaultModifier,
   collectEnums,

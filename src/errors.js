@@ -1,8 +1,15 @@
+// @ts-check
+/** @typedef {import("./types").ErrorEntry} ErrorEntry */
+
 /**
  * Every problem found in one DBML file, reported together. An optional
  * footer is appended after an empty line.
  */
 class DbmlError extends Error {
+  /**
+   * @param {ErrorEntry[]} errors
+   * @param {string} [footer]
+   */
   constructor(errors, footer) {
     const lines = errors.map(formatError).join("\n");
     super(footer ? `${lines}\n\n${footer}` : lines);
@@ -11,6 +18,12 @@ class DbmlError extends Error {
   }
 }
 
+/**
+ * One problem as `line <n>: <table>.<column>: <message>` (parts that are known).
+ *
+ * @param {ErrorEntry} error
+ * @returns {string}
+ */
 function formatError({ message, table, column, line }) {
   const location = [table, column].filter(Boolean).join(".");
   const parts = [];
@@ -22,7 +35,11 @@ function formatError({ message, table, column, line }) {
   return parts.join(": ");
 }
 
+/**
+ * @returns {import("./types").Collector}
+ */
 function createCollector() {
+  /** @type {ErrorEntry[]} */
   const errors = [];
 
   return {

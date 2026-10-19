@@ -47,6 +47,7 @@ const contract = `Table accounts [note: 'People'] {
 
 const contractTables = `${header}import { relations, sql } from "drizzle-orm";
 import { check, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 
 export const enum_accounts_status = ["active", "closed"] as const;
 
@@ -59,7 +60,7 @@ export const accounts = sqliteTable("accounts", {
   verified: integer("verified", { mode: "boolean" }).default(false),
   created_at: text("created_at").default(sql\`(CURRENT_TIMESTAMP)\`),
   prefs: text("prefs", { mode: "json" }),
-  manager_id: integer("manager_id").references(() => accounts.id, { onDelete: "set null" }),
+  manager_id: integer("manager_id").references((): AnySQLiteColumn => accounts.id, { onDelete: "set null" }),
 }, (t) => [
   uniqueIndex("accounts_email_ci").on(sql\`lower(email)\`).where(sql\`verified = 1\`),
   check("accounts_status_enum", sql\`status IN ('active', 'closed')\`),

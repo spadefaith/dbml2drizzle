@@ -1,12 +1,18 @@
+// @ts-check
 const parseSchema = require("../parse-schema");
 const { createCollector } = require("../errors");
 const { getDialect } = require("../dialects");
 const { propertyKey, member, tableExports } = require("./identifiers");
 const buildRelations = require("./relations");
 const { findEnum } = require("./collect-enums");
+const leadsBack = require("./cycles");
 
 /**
  * A note as a JSDoc comment, with `*\/` escaped so it cannot end the comment.
+ *
+ * @param {string | undefined} text
+ * @param {string} indent
+ * @returns {string[]}
  */
 function jsDoc(text, indent) {
   if (!text) {
@@ -20,16 +26,21 @@ function jsDoc(text, indent) {
     : [`${indent}/**`, ...lines.map((line) => `${indent} * ${line}`.trimEnd()), `${indent} */`];
 }
 
+/** @param {string} value */
 const action = (value) => JSON.stringify(String(value).toLowerCase());
 
+/** @param {{ onDelete?: string, onUpdate?: string }} relationship */
 const actionOptions = ({ onDelete, onUpdate }) =>
   [onDelete && `onDelete: ${action(onDelete)}`, onUpdate && `onUpdate: ${action(onUpdate)}`].filter(Boolean);
 
 /**
  * `text` escaped for a template literal, so the SQL keeps it exactly.
+ *
+ * @param {string} text
  */
 const templateText = (text) => text.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
 
+/** @param {Set<string>} set */
 const sorted = (set) => [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
 /**
@@ -37,6 +48,12 @@ const sorted = (set) => [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
  * Sections come in a fixed order (header, imports, enums, tables, relations;
  * see specs/004-drizzle-schema-generation/data-model.md), so the same DBML
  * always gives the same output. Throws DbmlError listing every problem.
+ *
+ * @typedef {{ dialect?: import("../dialects").DialectId, sourceName?: string }} GenerateSchemaOptions
+ *
+ * @param {string} dbmlText
+ * @param {GenerateSchemaOptions} [opts]
+ * @returns {string}
  */
 module.exports = function generateSchema(dbmlText, opts = {}) {
   const { dialect: dialectId = "pg", sourceName = "schema.dbml" } = opts;
@@ -61,6 +78,10 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
 
   const exports = tableExports(schema.tables, collector, enumExports);
   enums.length && dialect.enumBuilder && builders.add(dialect.enumBuilder);
+
+  // references in a cycle get a typed callback: TypeScript cannot infer those tables
+  const isCyclic = leadsBack(schema.relationships);
+  let typedReferences = false;
 
   const tableBlocks = schema.tables.map((table) => {
     const own = exports.get(table.name);
@@ -107,7 +128,9 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
 
         const target = exports.get(relationship.to.table);
         const options = actionOptions(relationship);
-        call += `.references(() => ${member(target, relationship.to.columns[0])}`;
+        const typed = Boolean(dialect.anyColumnType) && isCyclic(relationship.from.table, relationship.to.table);
+        typed && (typedReferences = true);
+        call += `.references(${typed ? `(): ${dialect.anyColumnType} =>` : "() =>"} ${member(target, relationship.to.columns[0])}`;
         call += options.length ? `, { ${options.join(", ")} })` : ")";
       }
 
@@ -193,6 +216,7 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
   const imports = [
     ormImports.size && `import { ${sorted(ormImports).join(", ")} } from "drizzle-orm";`,
     `import { ${sorted(builders).join(", ")} } from ${JSON.stringify(dialect.module)};`,
+    typedReferences && `import type { ${dialect.anyColumnType} } from ${JSON.stringify(dialect.module)};`,
   ].filter(Boolean);
 
   const sections = [

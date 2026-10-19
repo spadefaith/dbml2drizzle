@@ -59,14 +59,14 @@ test("inline and standalone references give the same lazy foreign key with actio
 
 test("references work for self-references and cycles in either order", () => {
   const self = generate("Table users {\n  id int [pk]\n  manager_id int [ref: > users.id]\n}\n");
-  has(self, '  manager_id: integer("manager_id").references(() => users.id),');
+  has(self, '  manager_id: integer("manager_id").references((): AnyPgColumn => users.id),');
 
   const a = "Table a {\n  id int [pk]\n  b_id int [ref: > b.id]\n}\n";
   const b = "Table b {\n  id int [pk]\n  a_id int [ref: > a.id]\n}\n";
 
   for (const output of [generate(a + b), generate(b + a)]) {
-    has(output, '  b_id: integer("b_id").references(() => b.id),');
-    has(output, '  a_id: integer("a_id").references(() => a.id),');
+    has(output, '  b_id: integer("b_id").references((): AnyPgColumn => b.id),');
+    has(output, '  a_id: integer("a_id").references((): AnyPgColumn => a.id),');
   }
 });
 

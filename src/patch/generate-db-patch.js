@@ -1,3 +1,4 @@
+// @ts-check
 const parseSchema = require("../parse-schema");
 
 const MOVED_REFS_COMMENT = "// Relationships moved from inline settings by dbml2drizzle";
@@ -9,11 +10,15 @@ const MOVED_REFS_COMMENT = "// Relationships moved from inline settings by dbml2
  * `Ref:` lines for moved relationships are appended at the end.
  *
  * This module never reads DBML syntax itself (Principle III).
+ *
+ * @param {string} dbmlText
+ * @returns {string}
  */
 module.exports = function generateDbPatch(dbmlText) {
   const text = String(dbmlText);
   const { patchEdits } = parseSchema(text);
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  /** @type {(string | null)[]} */
   const lines = text.split(/\r?\n/);
 
   for (const edit of patchEdits) {

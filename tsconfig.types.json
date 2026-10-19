@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "types",
+    "rootDir": "src",
+    "types": [],
+    "noCheck": true
+  },
+  "files": ["src/index.js", "src/index.mjs"],
+  "include": []
+}

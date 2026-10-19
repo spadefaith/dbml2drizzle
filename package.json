@@ -3,6 +3,21 @@
   "version": "3.0.0",
   "description": "Generate Drizzle ORM schemas and dbdocs-ready DBML from a DBML schema",
   "main": "src/index.js",
+  "types": "types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./types/index.d.mts",
+        "default": "./src/index.mjs"
+      },
+      "require": {
+        "types": "./types/index.d.ts",
+        "default": "./src/index.js"
+      }
+    },
+    "./package.json": "./package.json",
+    "./*": "./*"
+  },
   "bin": {
     "dbml2drizzle": "bin/dbml2drizzle.js"
   },
@@ -12,17 +27,20 @@
     "url": "https://github.com/spadefaith/dbml2drizzle.git"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "tsc -p tsconfig.json && node --test",
+    "build:types": "tsc -p tsconfig.types.json",
+    "prepack": "tsc -p tsconfig.types.json"
   },
   "engines": {
     "node": ">=20"
   },
   "keywords": [],
   "license": "ISC",
-  "dependencies": {},
   "devDependencies": {
     "@dbml/core": "^10.3.1",
+    "@types/node": "^20.19.43",
     "drizzle-kit": "^0.31.11",
-    "drizzle-orm": "^0.45.4"
+    "drizzle-orm": "^0.45.4",
+    "typescript": "^7.0.2"
   }
 }
