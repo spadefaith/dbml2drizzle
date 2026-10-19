@@ -64,7 +64,7 @@ console.log(JSON.stringify({
   assert.equal(result.same, true);
   assert.equal(result.defaultSame, true);
   assert.equal(result.crossInstanceof, true);
-  assert.deepEqual(result.dialects, ["pg", "d1"]);
+  assert.deepEqual(result.dialects, ["pg", "sqlite"]);
   assert.deepEqual(runJson(dir, "dynamic.cjs"), { same: true });
 });
 
@@ -96,7 +96,7 @@ test("a CommonJS project keeps require(), internal paths and the command-line to
 const consumerTs = `import { generateSchema, parseSchema, dialects, DbmlError } from "dbml2drizzle";
 import type { DialectId, ErrorEntry, Schema } from "dbml2drizzle";
 
-const text: string = generateSchema("Table a {\\n  id int [pk]\\n}\\n", { dialect: "d1" });
+const text: string = generateSchema("Table a {\\n  id int [pk]\\n}\\n", { dialect: "sqlite" });
 // @ts-expect-error: not a registered dialect
 generateSchema(text, { dialect: "mysql" });
 

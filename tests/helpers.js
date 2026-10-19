@@ -31,7 +31,7 @@ let loaded = 0;
  * inside the repository so that `drizzle-orm` resolves, and removed after.
  * The TypeScript-only syntax the generator emits is removed so the source
  * runs as JavaScript (also on Node.js 20, which cannot strip types): `as
- * const` on D1 enum values, and the typed callbacks of references in a cycle
+ * const` on SQLite enum values, and the typed callbacks of references in a cycle
  * with their `import type` line.
  */
 async function loadGenerated(text) {

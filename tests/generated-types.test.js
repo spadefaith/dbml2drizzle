@@ -36,7 +36,7 @@ Table orders {
 const tsc = path.join(path.dirname(require.resolve("typescript/package.json")), "bin", "tsc");
 const dir = path.join(__dirname, "..", "tmp", "typecheck");
 
-for (const dialect of ["pg", "d1"]) {
+for (const dialect of ["pg", "sqlite"]) {
   test(`generated ${dialect} schemas with self-references and cycles pass strict TypeScript`, () => {
     // inside the repository, so that drizzle-orm resolves
     fs.mkdirSync(dir, { recursive: true });

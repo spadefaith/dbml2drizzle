@@ -14,17 +14,17 @@ test("pg is the default dialect", () => {
 
 test("an unsupported dialect lists the supported ones", () => {
   assert.throws(() => generateSchema(dbml, { dialect: "mysql" }), {
-    message: "Unsupported dialect 'mysql'. Supported: pg, d1",
+    message: "Unsupported dialect 'mysql'. Supported: pg, sqlite",
   });
 });
 
 test("dialects lists the registered targets", () => {
-  assert.deepEqual(dialects, ["pg", "d1"]);
+  assert.deepEqual(dialects, ["pg", "sqlite"]);
 });
 
-test("d1 is selected with { dialect: \"d1\" }", () => {
-  assert.equal(getDialect("d1").id, "d1");
-  assert.match(generateSchema(dbml, { dialect: "d1" }), /sqliteTable\("users"/);
+test("sqlite is selected with { dialect: \"sqlite\" }", () => {
+  assert.equal(getDialect("sqlite").id, "sqlite");
+  assert.match(generateSchema(dbml, { dialect: "sqlite" }), /sqliteTable\("users"/);
 });
 
 test("writeSchema writes nothing for an unsupported dialect", () => {

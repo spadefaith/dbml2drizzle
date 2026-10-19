@@ -1,7 +1,7 @@
 const checkIncrement = require("./increment");
 
 /**
- * Cloudflare D1 (SQLite) column builders (drizzle-orm/sqlite-core) for the
+ * SQLite column builders (drizzle-orm/sqlite-core) for the
  * canonical DBML types. Each entry returns [builder, options text or ""].
  * Lengths are kept as written although SQLite does not enforce them;
  * decimals and date/time values are stored as text.
@@ -40,7 +40,7 @@ module.exports = function columnCall(column, location, collector, table) {
   const toBuilder = TYPES[type.name];
 
   if (!toBuilder) {
-    collector.add({ ...location, message: `Type '${type.name}' has no D1 mapping` });
+    collector.add({ ...location, message: `Type '${type.name}' has no SQLite mapping` });
     return null;
   }
 

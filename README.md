@@ -32,7 +32,7 @@ You keep the database design in `db.dbml`. This package turns it into a `schema.
 - [Renaming a table or column](#renaming-a-table-or-column)
 - [Moving from dbml2sequelize](#moving-from-dbml2sequelize)
 - [Target databases](#target-databases)
-- [Cloudflare D1](#cloudflare-d1)
+- [SQLite](#sqlite)
 - [Errors](#errors)
 - [Converted as written](#converted-as-written)
 - [Documentation with dbdocs](#documentation-with-dbdocs)
@@ -81,7 +81,7 @@ dbml2drizzle --help
 
 | Command | Writes | Default output |
 |---|---|---|
-| `schema` | The Drizzle schema for the target (`--dialect pg` or `--dialect d1`, default `pg`) | `<dir>/<name>.schema.ts` (`db.dbml` → `db.schema.ts`) |
+| `schema` | The Drizzle schema for the target (`--dialect pg` or `--dialect sqlite`, default `pg`) | `<dir>/<name>.schema.ts` (`db.dbml` → `db.schema.ts`) |
 | `patch` | A dbdocs-ready copy of the DBML | `<dir>/<name>-patch.dbml` |
 
 - On success, the written path is printed.
@@ -113,7 +113,7 @@ const { generateSchema } = await import("dbml2drizzle");
 
 Both give the same objects, so `error instanceof DbmlError` holds however the package was loaded.
 
-**TypeScript**: type declarations are included, for projects that compile to CommonJS or to ES modules. `dialect` is typed as `"pg" | "d1"`, `parseSchema` returns a typed `Schema`, and `DbmlError` works as a value (`instanceof`) and as a type. The types are exported too:
+**TypeScript**: type declarations are included, for projects that compile to CommonJS or to ES modules. `dialect` is typed as `"pg" | "sqlite"`, `parseSchema` returns a typed `Schema`, and `DbmlError` works as a value (`instanceof`) and as a type. The types are exported too:
 
 ```ts
 import { generateSchema, DbmlError } from "dbml2drizzle";
@@ -127,10 +127,10 @@ import type { DialectId, ErrorEntry, Schema } from "dbml2drizzle";
 | `generateDbPatch(dbmlText)` | The dbdocs-ready DBML as a string. |
 | `writeDbPatch(dbmlPath, { outPath })` | The written path. |
 | `parseSchema(dbmlText)` | The parsed, dialect-neutral schema description (`{ tables, enums, relationships, patchEdits }`). |
-| `dialects` | The supported targets: `["pg", "d1"]`. |
+| `dialects` | The supported targets: `["pg", "sqlite"]`. |
 | `DbmlError` | Thrown for DBML problems. `error.errors` is `[{ line, table, column, message }]`. |
 
-An unsupported dialect throws `Error("Unsupported dialect '<id>'. Supported: pg, d1")`.
+An unsupported dialect throws `Error("Unsupported dialect '<id>'. Supported: pg, sqlite")`.
 
 ## DBML reference
 
@@ -315,7 +315,7 @@ account_id: integer("account_id").notNull().references(() => accounts.id, { onDe
 - Actions: `cascade`, `set null`, `set default`, `restrict`, `no action`.
 - References are lazy (`() => table.column`), so self-references and cycles between tables need no special ordering.
 
-**Self-references and cycles.** TypeScript cannot infer the type of a table whose references lead back to it, either directly (`accounts.created_by → accounts.id`) or through other tables (`departments.manager_id → employees`, `employees.department_id → departments`). Those references get an explicit callback type, `AnyPgColumn` (PostgreSQL) or `AnySQLiteColumn` (D1), imported as a type only when the file needs it:
+**Self-references and cycles.** TypeScript cannot infer the type of a table whose references lead back to it, either directly (`accounts.created_by → accounts.id`) or through other tables (`departments.manager_id → employees`, `employees.department_id → departments`). Those references get an explicit callback type, `AnyPgColumn` (PostgreSQL) or `AnySQLiteColumn` (SQLite), imported as a type only when the file needs it:
 
 ```ts
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
@@ -426,7 +426,7 @@ Sections always come in this order, so the same DBML gives a byte-identical file
 - **Column keys**: the database name as is, quoted when it isn't a valid JavaScript identifier (`"first-name": varchar("first-name")`).
 - **Table exports**: the table name, with characters that can't appear in an identifier replaced by `_`. A `_` is prefixed when the name starts with a digit or is a reserved word, so the table `class` is exported as `_class` but stays `pgTable("class", …)`. Two tables that end up with the same export name are an error.
 
-The PostgreSQL output is also valid JavaScript (ESM), unless it contains self-references or reference cycles, whose callbacks are typed (see [Relationships](#relationships-foreign-keys)). A D1 schema with enums (`as const`, see [Cloudflare D1](#cloudflare-d1)) or with such references is TypeScript only.
+The PostgreSQL output is also valid JavaScript (ESM), unless it contains self-references or reference cycles, whose callbacks are typed (see [Relationships](#relationships-foreign-keys)). A SQLite schema with enums (`as const`, see [SQLite](#sqlite)) or with such references is TypeScript only.
 
 Don't edit the generated file. Change the DBML and regenerate.
 
@@ -483,19 +483,19 @@ Other removed features:
 | Target | `--dialect` | Drizzle module | drizzle-kit |
 |---|---|---|---|
 | PostgreSQL (default) | `pg` | `drizzle-orm/pg-core` | `dialect: "postgresql"` |
-| Cloudflare D1 | `d1` | `drizzle-orm/sqlite-core` | `dialect: "sqlite"`, `driver: "d1-http"` |
+| SQLite (Cloudflare D1, libSQL/Turso, local SQLite) | `sqlite` | `drizzle-orm/sqlite-core` | `dialect: "sqlite"` (D1: `driver: "d1-http"`; Turso: `dialect: "turso"`) |
 
 Drizzle uses a separate schema per database, so each target is a self-contained module:
 
 ```text
 src/dialects/
-  index.js        registry: { pg, d1 }
+  index.js        registry: { pg, sqlite }
   pg/
     types.js      DBML type → pg-core builder
     defaults.js   default values
     enums.js      enum declarations
     index.js      the dialect object
-  d1/
+  sqlite/
     types.js      DBML type → sqlite-core builder
     defaults.js   default values
     enums.js      enum values, enum columns and enum checks
@@ -510,16 +510,24 @@ Rules shared by every target (enum collection, naming, ordering, relations) live
 
 The parser and the shared schema description don't change.
 
-## Cloudflare D1
+## SQLite
 
-[Cloudflare D1](https://developers.cloudflare.com/d1/) is SQLite. Select it with `--dialect d1` on the command line or `{ dialect: "d1" }` in the JavaScript API:
+Drizzle uses one SQLite schema (`drizzle-orm/sqlite-core`) for every SQLite database it supports, so one target serves them all: **Cloudflare D1**, **libSQL / Turso**, **better-sqlite3**, **`node:sqlite`**, **Bun** and **Expo**. Select it with `--dialect sqlite` on the command line or `{ dialect: "sqlite" }` in the JavaScript API:
 
 ```bash
-npx dbml2drizzle schema db/db.dbml --out src/db/schema.ts --dialect d1
+npx dbml2drizzle schema db/db.dbml --out src/db/schema.ts --dialect sqlite
 ```
 
+The generated schema is the same for every SQLite database; only `drizzle.config.ts` (and the `drizzle()` import at runtime) differ:
+
+| Database | `drizzle.config.ts` |
+|---|---|
+| Cloudflare D1 | `dialect: "sqlite"`, `driver: "d1-http"` |
+| libSQL / Turso | `dialect: "turso"` |
+| Local file (better-sqlite3, `node:sqlite`, Bun, Expo) | `dialect: "sqlite"` |
+
 ```ts
-// drizzle.config.ts
+// drizzle.config.ts (Cloudflare D1)
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
@@ -530,9 +538,11 @@ export default defineConfig({
 });
 ```
 
+The package's tests check the generated schema with drizzle-kit's SQLite generator and against Cloudflare D1's rules; the other drivers use the same schema.
+
 The same `db.dbml` works for both targets. Everything in the [DBML reference](#dbml-reference) applies, except as listed below. Relations, naming, ordering and notes (JSDoc comments) are the same as for PostgreSQL.
 
-### Column types (D1)
+### Column types (SQLite)
 
 SQLite stores every value as integer, real, text or blob, so several DBML types share one storage type.
 
@@ -550,7 +560,7 @@ SQLite stores every value as integer, real, text or blob, so several DBML types 
 | `uuid` | `text("c")` | |
 | `enum('a', 'b', …)` and `Enum` blocks | `text("c", { enum: <values> })` + a check | See below. |
 
-### Enums (D1)
+### Enums (SQLite)
 
 SQLite has no enum type. Each enum (inline or `Enum` block) is declared **once** as a constant of its values, named as for PostgreSQL. Every column that uses it is text limited to those values in TypeScript, and a generated check constraint enforces them in the database:
 
@@ -568,21 +578,21 @@ export const accounts = sqliteTable("accounts", {
 - Values are quoted with `'` doubled; a column name that isn't a plain identifier is double-quoted.
 - Adding or removing a value later changes the check, which drizzle-kit applies by rebuilding the table.
 
-### Keys, defaults and indexes (D1)
+### Keys, defaults and indexes (SQLite)
 
 - **`increment`** is allowed only on the table's single primary key of type `integer`, `smallint` or `bigint`, and becomes `.primaryKey({ autoIncrement: true })` (`INTEGER PRIMARY KEY AUTOINCREMENT`). Anywhere else it is an error.
 - **Defaults**: `` `now()` `` and `CURRENT_TIMESTAMP` become ``.default(sql`(CURRENT_TIMESTAMP)`)``; `CURRENT_DATE` and `CURRENT_TIME` become ``sql`(CURRENT_DATE)` `` and ``sql`(CURRENT_TIME)` ``. Other backtick expressions are written as is: SQLite requires parentheses around an expression default, so write `` default: `(abs(-1))` ``. Values are written as for PostgreSQL.
 - **Indexes**: plain, unique, composite, expression and partial indexes work as for PostgreSQL. An index `type:` (e.g. `gin`) is an error, because SQLite has no index types.
-- **References** with `delete:` / `update:` actions and composite foreign keys work as for PostgreSQL. D1 enforces foreign keys.
+- **References** with `delete:` / `update:` actions and composite foreign keys work as for PostgreSQL. D1 enforces foreign keys; for local SQLite files, foreign keys are enforced when the driver enables `PRAGMA foreign_keys`.
 
-### Errors (D1)
+### Errors (SQLite)
 
 | Message | Cause |
 |---|---|
-| `increment on D1 needs the table's single integer primary key` | `increment` on a column that is not the table's only primary key, or not `integer`, `smallint` or `bigint`. |
-| `Index type '<TYPE>' is not supported on D1` | An index with `type:`. Reported at the table's line. |
+| `increment on SQLite needs the table's single integer primary key` | `increment` on a column that is not the table's only primary key, or not `integer`, `smallint` or `bigint`. |
+| `Index type '<TYPE>' is not supported on SQLite` | An index with `type:`. Reported at the table's line. |
 | `Check name '<name>' is declared and also generated for enum column <table>.<column>` | A declared check named like a generated enum check. |
-| `Type '<type>' has no D1 mapping` | A known DBML type D1 can't express. |
+| `Type '<type>' has no SQLite mapping` | A known DBML type SQLite can't express. |
 
 ## Errors
 
@@ -591,7 +601,7 @@ The whole file is checked before anything is written. Every problem is reported 
 | Message | Cause |
 |---|---|
 | `Unsupported data type '<type>'` | A type not in the [type table](#column-types-postgresql). |
-| `Type '<type>' has no PostgreSQL mapping` | A known DBML type the target can't express. For D1-only errors, see [Errors (D1)](#errors-d1). |
+| `Type '<type>' has no PostgreSQL mapping` | A known DBML type the target can't express. For SQLite-only errors, see [Errors (SQLite)](#errors-sqlite). |
 | `increment needs integer, bigint or smallint` | `increment` on another type. |
 | `enum must have at least one value` | `enum()` |
 | `text accepts only tiny, medium or long` | `text('huge')` |

@@ -2,7 +2,7 @@ const { collectEnums, findEnum, enumComment } = require("../../generator/collect
 const checkIncrement = require("./increment");
 
 /**
- * A D1 enum declaration: SQLite has no enum type, so the values are declared
+ * A SQLite enum declaration: SQLite has no enum type, so the values are declared
  * once as a constant, `export const <name> = [...] as const`, with the
  * enum's notes as a JSDoc comment.
  */

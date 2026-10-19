@@ -7,7 +7,7 @@
 - References whose table leads back to itself — self-references (`accounts.created_by →
   accounts.id`) and cycles between tables (`departments.manager_id → employees`,
   `employees.department_id → departments`) — are now generated as
-  `.references((): AnyPgColumn => …)` (`AnySQLiteColumn` for D1), with an
+  `.references((): AnyPgColumn => …)` (`AnySQLiteColumn` for SQLite), with an
   `import type { AnyPgColumn } from "drizzle-orm/pg-core";` line. Without the type, strict
   TypeScript reported those tables as implicitly `any`. Types only: the database schema is
   unchanged and drizzle-kit generates no migration. A generated file with such references is
@@ -28,18 +28,19 @@
   In `db-patch.dbml` a `Note` inside an `Enum` moves onto its first value, since standard DBML
   rejects a note on an `Enum`.
 
-- Cloudflare D1 target: `--dialect d1` / `{ dialect: "d1" }` writes a `drizzle-orm/sqlite-core`
-  schema for drizzle-kit's `sqlite` dialect with the `d1-http` driver. Decimals and dates are
+- SQLite target: `--dialect sqlite` / `{ dialect: "sqlite" }` writes a `drizzle-orm/sqlite-core`
+  schema, the same for every SQLite database Drizzle supports (Cloudflare D1 with the `d1-http`
+  driver, libSQL/Turso, better-sqlite3, `node:sqlite`, Bun, Expo). Decimals and dates are
   stored as text; enums are declared once as `as const` value arrays, used as
   `text("c", { enum })` and enforced by a generated check `<table>_<column>_enum`. `increment` is
   allowed only on the single integer primary key, and index types are errors. `dialects` is now
-  `["pg", "d1"]`. The PostgreSQL output is unchanged.
+  `["pg", "sqlite"]`. The PostgreSQL output is unchanged.
 
 - ES module entry: `import { generateSchema, … } from "dbml2drizzle"` (and `await import()`) in ES
   module projects, through `package.json` `exports`. It re-exports the CommonJS API, so `require`
   and `import` give the same objects (`instanceof DbmlError` holds across both).
 - Type declarations, generated from JSDoc in the source, for TypeScript projects compiled to
-  CommonJS or ES modules: `dialect` is `"pg" | "d1"`, `parseSchema` returns `Schema`,
+  CommonJS or ES modules: `dialect` is `"pg" | "sqlite"`, `parseSchema` returns `Schema`,
   `DbmlError.errors` is `ErrorEntry[]`; the types are exported (`import type { Schema } …`).
 - Not breaking: `require("dbml2drizzle")`, internal paths such as
   `dbml2drizzle/src/parse-schema.js`, the command-line tool and the generated output are unchanged.

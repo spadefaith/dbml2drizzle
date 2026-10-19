@@ -186,7 +186,7 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
       extra.push(`${dialect.checkBuilder}(${JSON.stringify(check.name)}, sql\`${templateText(check.expression)}\`)`);
     }
 
-    // checks the dialect generates (e.g. D1 enum checks), after the declared ones
+    // checks the dialect generates (e.g. SQLite enum checks), after the declared ones
     for (const check of dialect.tableChecks ? dialect.tableChecks(table, enums) : []) {
       if (table.checks.some((declared) => declared.name == check.name)) {
         const column = table.columns.find((item) => item.name == check.column);

@@ -1,11 +1,11 @@
 // @ts-check
 const pg = require("./pg");
-const d1 = require("./d1");
+const sqlite = require("./sqlite");
 
-const registry = { pg, d1 };
+const registry = { pg, sqlite };
 
 /**
- * A registered target dialect id: "pg" | "d1".
+ * A registered target dialect id: "pg" | "sqlite".
  *
  * @typedef {keyof typeof registry} DialectId
  */

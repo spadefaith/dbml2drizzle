@@ -95,8 +95,8 @@ test("references in a cycle get a typed callback (pg)", () => {
   assert.equal(tablesOf(generate(dbml)), tables("pgTable", "drizzle-orm/pg-core", "AnyPgColumn"));
 });
 
-test("references in a cycle get a typed callback (d1)", () => {
-  assert.equal(tablesOf(generate(dbml, "d1")), tables("sqliteTable", "drizzle-orm/sqlite-core", "AnySQLiteColumn"));
+test("references in a cycle get a typed callback (sqlite)", () => {
+  assert.equal(tablesOf(generate(dbml, "sqlite")), tables("sqliteTable", "drizzle-orm/sqlite-core", "AnySQLiteColumn"));
 });
 
 test("relations are unchanged", () => {

@@ -4,14 +4,14 @@ const defaultModifier = require("./defaults");
 const { collectEnums, enumDeclaration, enumColumnCall, tableChecks } = require("./enums");
 
 /**
- * Cloudflare D1 target (drizzle-orm/sqlite-core; drizzle-kit dialect
- * "sqlite", driver "d1-http").
+ * SQLite target (drizzle-orm/sqlite-core) for every SQLite database Drizzle
+ * supports: Cloudflare D1, libSQL/Turso, better-sqlite3, node:sqlite, Bun, Expo.
  *
  * @type {import("../../types").Dialect}
  */
 module.exports = {
-  id: "d1",
-  label: "D1",
+  id: "sqlite",
+  label: "SQLite",
   module: "drizzle-orm/sqlite-core",
   tableBuilder: "sqliteTable",
   enumBuilder: null,
