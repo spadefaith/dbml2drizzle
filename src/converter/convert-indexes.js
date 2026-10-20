@@ -27,11 +27,22 @@ function whereEdit({ settings, line, indent, target, trailing }, where) {
 }
 
 /**
+ * Patch edit for an entry whose expression holds a backtick, which standard
+ * DBML cannot write in an expression: the entry becomes a `//` comment that
+ * keeps it (see specs/013 research R4).
+ */
+function backtickEdit({ settings, line, indent, target, trailing }, name) {
+  const settingsText = settings.length ? ` [${settings.map((setting) => setting.text).join(", ")}]` : "";
+  return { line, replacement: `${indent}// index ${name}: ${target}${settingsText}${trailing}` };
+}
+
+/**
  * Turns parsed `indexes { }` lines of one table into data-model.md Indexes:
  * { fields, parts, name, unique, using, where }. Entries marked `pk` are
  * returned separately in `primaryKeys` ([{ fields, line }]) because they
  * declare the table's primary key rather than an index. `patchEdits` move
- * each `where` into the entry's note for `db-patch.dbml`.
+ * each `where` into the entry's note for `db-patch.dbml`, or turn an entry
+ * whose expression holds a backtick into a comment.
  */
 module.exports = function convertIndexes(table, columns, indexLines, collector) {
   const indexes = [];
@@ -112,11 +123,18 @@ module.exports = function convertIndexes(table, columns, indexLines, collector) 
       continue;
     }
 
-    index.where && patchEdits.push(whereEdit(indexLine, index.where));
+    const name = index.name || `${table}_${fields.join("_")}`;
+
+    if (expressions.some((part) => part.expression.includes("`"))) {
+      patchEdits.push(backtickEdit(indexLine, name));
+    } else if (index.where) {
+      patchEdits.push(whereEdit(indexLine, index.where));
+    }
+
     indexes.push({
       fields: index.fields,
       parts: index.parts,
-      name: index.name || `${table}_${fields.join("_")}`,
+      name,
       ...(index.unique && { unique: true }),
       ...(index.using && { using: index.using }),
       ...(index.where && { where: index.where }),

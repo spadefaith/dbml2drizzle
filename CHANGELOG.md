@@ -51,6 +51,21 @@
 - The error `Enum blocks are not supported; use an inline enum('a','b') type` is gone.
 - `parseSchema()` returns an `enums` array.
 
+### Fixed
+
+`db-patch.dbml` is now accepted by `@dbml/core` for these inputs too. Each fix changes only copies
+that `@dbml/core` rejected before; the generated schema is unchanged.
+
+- An unquoted `now()`, `CURRENT_TIMESTAMP`, `CURRENT_DATE` or `CURRENT_TIME` default is written in
+  backticks (``default: `now()` ``).
+- A moved `Ref:` line quotes a table or column name that is not a plain identifier
+  (`Ref: "order items".order_id > orders.id [delete: cascade]`); the quotes used to be lost.
+- A reference declared more than once with the same endpoints is kept once: the declaration read
+  first stays, repeated `Ref:` lines and `Ref { }` entries are removed (an emptied `Ref { }` block
+  too), and a repeated inline `ref:` is removed from its column.
+- A check or index whose expression contains an escaped backtick (`` \` ``), which standard DBML
+  cannot write, becomes a `//` comment on its line that keeps the check or index.
+
 ## 3.0.0
 
 The package is renamed **dbml2drizzle**. It now generates a Drizzle ORM schema from DBML, and

@@ -237,7 +237,7 @@
 /**
  * One line of a `checks { }` block (see parser/parse-checks-content.js).
  *
- * @typedef {{ expression: string, settings: Setting[], line: number }} CheckLine
+ * @typedef {{ expression: string, settings: Setting[], line: number, indent: string, target: string, trailing: string }} CheckLine
  */
 
 /**

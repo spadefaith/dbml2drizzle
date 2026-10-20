@@ -10,12 +10,13 @@ const parseChecksContent = require("./parser/parse-checks-content");
 // the casts add the properties these modules attach to their exported function
 const convertAttributes = /** @type {typeof import("./converter/convert-attributes") & { RENAMED_FROM_MESSAGE: string }} */ (require("./converter/convert-attributes"));
 const convertIndexes = require("./converter/convert-indexes");
-const convertChecks = require("./converter/convert-checks");
+const convertChecks = /** @type {typeof import("./converter/convert-checks") & { expressionOf: (value: string) => string | null }} */ (require("./converter/convert-checks"));
 const convertNote = /** @type {typeof import("./converter/convert-note") & { cleanNote: (text: string) => string }} */ (require("./converter/convert-note"));
 const resolveRelationships = require("./converter/resolve-relationships");
 const parseRefLine = require("./parser/parse-ref-line");
 const parseEnum = require("./parser/parse-enum");
 const { cleanNote } = convertNote;
+const { expressionOf } = convertChecks;
 const { RENAMED_FROM_MESSAGE } = convertAttributes;
 
 /** @typedef {import("./types").Block} Block */
@@ -26,44 +27,152 @@ const { RENAMED_FROM_MESSAGE } = convertAttributes;
 /** @typedef {import("./types").RawRef} RawRef */
 
 const TABLE_SETTINGS = ["note", "headercolor"];
-const MOVED_SETTINGS = ["ref", "delete", "update"];
 
-/** @param {import("./types").Setting[]} settings */
+// defaults resolveDefault treats as SQL; standard DBML needs them in backticks
+const SQL_DEFAULT = /^(now\(\)|CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME)$/i;
+
+/** @param {{ text: string }[]} settings */
 const settingsText = (settings) =>
   settings.length ? ` [${settings.map((setting) => setting.text).join(", ")}]` : "";
 
 /**
- * Patch edits for one column line that standard DBML rejects: an inline
- * ref with delete:/update: becomes a standalone `Ref:` line with the
- * direction as written. The line keeps its other settings and its
- * trailing comment, and gets a single replacement (see data-model.md
- * PatchEdit).
+ * A table or column name for a `Ref:` line: quoted unless it is a plain identifier.
+ *
+ * @param {string} name
+ */
+const refName = (name) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : `"${name}"`);
+
+/**
+ * `table.column` or `"order items".column` without quotes, to compare reference sides.
+ *
+ * @param {string} text
+ */
+const plainSide = (text) => text.trim().replace(/"/g, "");
+
+/**
+ * A relationship side as `table.column` or `table.(a, b)`.
+ *
+ * @param {{ table: string, columns: string[] }} side
+ */
+const sideName = ({ table, columns }) =>
+  columns.length == 1 ? `${table}.${columns[0]}` : `${table}.(${columns.join(", ")})`;
+
+/**
+ * Patch edits for one column line that standard DBML rejects (see
+ * data-model.md PatchEdit and specs/013 research R1–R5):
+ *
+ * - an inline ref with delete:/update: becomes a standalone `Ref:` line with
+ *   the direction as written, its names quoted where needed;
+ * - an inline ref that repeats an earlier declaration (`dropped`) is removed,
+ *   together with its actions when no other ref stays on the line;
+ * - an unquoted `now()` / `CURRENT_*` default is written in backticks;
+ * - a `check:` whose expression holds a backtick becomes a `//` comment.
+ *
+ * The line keeps its other settings and its trailing comment, and gets at
+ * most one replacement. A line that needs none of these is left unchanged.
  *
  * @param {string} table
  * @param {ColumnLine} columnLine
+ * @param {Set<string>[]} dropped the sides (`table.column`) of each reference
+ *   declared on this line that an earlier declaration already covers
  * @returns {PatchEdit[]}
  */
-function columnLineEdits(table, columnLine) {
+function columnLineEdits(table, columnLine, dropped) {
   const { name, settings, head, trailing, line } = columnLine;
   const actions = settings.filter((setting) => setting.key == "delete" || setting.key == "update");
   const refs = settings.filter((setting) => setting.key == "ref");
+  // convertAttributes has already rejected refs that do not match
+  /** @param {import("./types").Setting} ref */
+  const parts = (ref) => /** @type {RegExpMatchArray} */ (String(ref.value).trim().match(/^(<>|>|<|-)\s*(.+)$/s));
+  /** @param {import("./types").Setting} ref */
+  const isDropped = (ref) => dropped.some((sides) => sides.has(plainSide(parts(ref)[2])));
+  const keptRefs = refs.filter((ref) => !isDropped(ref));
+  const moving = actions.length > 0 && refs.length > 0;
 
-  if (actions.length == 0 || refs.length == 0) {
+  /** @type {{ text: string }[]} */
+  const kept = [];
+  const comments = [];
+  let changed = false;
+
+  for (const setting of settings) {
+    const value = String(setting.value).trim();
+    const expression = setting.key == "check" ? expressionOf(value) : null;
+
+    if (setting.key == "ref" && (moving || isDropped(setting))) {
+      changed = true;
+    } else if ((setting.key == "delete" || setting.key == "update") && moving) {
+      changed = true;
+    } else if (setting.key == "default" && SQL_DEFAULT.test(value)) {
+      kept.push({ text: `default: \`${value}\`` });
+      changed = true;
+    } else if (expression && expression.includes("`")) {
+      comments.push(`// check ${table}_${name}_check: ${value}`);
+      changed = true;
+    } else {
+      kept.push(setting);
+    }
+  }
+
+  if (!changed) {
     return [];
   }
 
-  const kept = settings.filter((setting) => !MOVED_SETTINGS.includes(setting.key));
-  const replacement = `${head}${settingsText(kept)}${trailing}`;
-  const actionText = actions.map((setting) => `${setting.key}: ${setting.value}`).join(", ");
+  const comment = trailing.replace(/\s+$/, "");
+  const ending = comments.length ? `${comment.trim() ? comment : ""} ${comments.join(" ")}` : trailing;
+  /** @type {PatchEdit[]} */
+  const edits = [{ line, replacement: `${head}${settingsText(kept)}${ending}` }];
 
-  return refs.map((ref, index) => {
-    // convertAttributes has already rejected refs that do not match
-    const [, op, target] = /** @type {RegExpMatchArray} */ (String(ref.value).trim().match(/^(<>|>|<|-)\s*(.+)$/s));
-    /** @type {PatchEdit} */
-    const edit = { line, appendRef: `Ref: ${table}.${name} ${op} ${target.trim()} [${actionText}]` };
-    index == 0 && (edit.replacement = replacement);
-    return edit;
-  });
+  if (moving) {
+    const actionText = actions.map((setting) => `${setting.key}: ${setting.value}`).join(", ");
+
+    for (const ref of keptRefs) {
+      const [, op, target] = parts(ref);
+      edits.push({ line, appendRef: `Ref: ${refName(table)}.${refName(name)} ${op} ${target.trim()} [${actionText}]` });
+    }
+  }
+
+  return edits;
+}
+
+/**
+ * Patch edits for references declared more than once with the same
+ * endpoints: standard DBML rejects the repeats. The declaration read first
+ * (`declaredAt[0]`) is kept; a repeated standalone `Ref:` line or `Ref { }`
+ * entry is removed, and a `Ref { }` block left empty is removed whole.
+ * Repeated inline declarations are returned in `droppedInline` (by line) for
+ * columnLineEdits. See specs/013 research R3.
+ *
+ * @param {import("./types").Relationship[]} relationships
+ * @param {Block[]} refBlocks the top-level `Ref { }` blocks
+ * @returns {{ edits: PatchEdit[], droppedInline: Map<number, Set<string>[]> }}
+ */
+function duplicateRefEdits(relationships, refBlocks) {
+  /** @type {Map<number, Set<string>[]>} */
+  const droppedInline = new Map();
+  /** @type {Set<number>} */
+  const removed = new Set();
+
+  for (const relationship of relationships) {
+    const sides = new Set([sideName(relationship.from), sideName(relationship.to)]);
+
+    for (const { line, form } of relationship.declaredAt.slice(1)) {
+      form == "inline"
+        ? droppedInline.set(line, [...(droppedInline.get(line) || []), sides])
+        : removed.add(line);
+    }
+  }
+
+  const edits = [...removed].map((line) => ({ line, remove: true }));
+
+  for (const block of refBlocks) {
+    if (block.items.length && block.items.every((item) => removed.has(item.line))) {
+      for (let line = block.line; line <= /** @type {number} */ (block.endLine); line++) {
+        removed.has(line) || edits.push({ line, remove: true });
+      }
+    }
+  }
+
+  return { edits, droppedInline };
 }
 
 /**
@@ -169,12 +278,14 @@ function parseTable(block, definition, collector, enums) {
     }
   }
 
-  const checks = convertChecks(name, columnChecks, checkLines || [], collector);
+  const { checks, patchEdits: checkEdits } = convertChecks(name, columnChecks, checkLines || [], collector);
 
+  // column-line edits need the resolved relationships, so parseSchema builds them
   return {
     table: { name, comment, columns, indexes, checks, line: block.line },
     rawRefs,
-    patchEdits: [...columnLines.flatMap((columnLine) => columnLineEdits(name, columnLine)), ...indexEdits],
+    columnLines,
+    patchEdits: [...indexEdits, ...checkEdits],
   };
 }
 
@@ -199,6 +310,10 @@ module.exports = function parseSchema(text) {
   const enums = [];
   /** @type {Map<string, Enum>} */
   const enumsByName = new Map();
+  /** @type {{ table: string, columnLines: ColumnLine[] }[]} */
+  const tableColumnLines = [];
+  /** @type {Block[]} */
+  const refBlocks = [];
   const definitions = new Map(blocks.map((block) => [block, parseDefinitionType(block, collector)]));
 
   // Enum blocks first, so columns can use an enum declared later in the file
@@ -239,7 +354,9 @@ module.exports = function parseSchema(text) {
       tables.push(parsed.table);
       rawRefs = rawRefs.concat(parsed.rawRefs);
       patchEdits = patchEdits.concat(parsed.patchEdits);
+      tableColumnLines.push({ table: parsed.table.name, columnLines: parsed.columnLines });
     } else if (definition.type == "Ref") {
+      refBlocks.push(block);
       for (const item of block.items) {
         const ref = parseRefLine(item, collector, { inBlock: true });
         ref && rawRefs.push(ref);
@@ -277,6 +394,12 @@ module.exports = function parseSchema(text) {
 
   collector.throwIfAny();
 
+  const { edits: duplicateEdits, droppedInline } = duplicateRefEdits(relationships, refBlocks);
+  patchEdits = patchEdits.concat(
+    duplicateEdits,
+    tableColumnLines.flatMap(({ table, columnLines }) =>
+      columnLines.flatMap((columnLine) => columnLineEdits(table, columnLine, droppedInline.get(columnLine.line) || [])))
+  );
   patchEdits.sort((a, b) => a.line - b.line);
 
   return { tables, enums, relationships, patchEdits };

@@ -644,7 +644,7 @@ The package checks the **DBML**: syntax, types, references, conflicting declarat
 
 ## Documentation with dbdocs
 
-Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject four parts of this project's dialect: `delete:` / `update:` inside a column's settings, `Note: {` blocks, `where:` on an index, and a `Note` inside an `Enum`. The `patch` command writes a copy they accept:
+Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject some parts of this project's dialect: `delete:` / `update:` inside a column's settings, `Note: {` blocks, `where:` on an index, a `Note` inside an `Enum`, unquoted `now()` / `CURRENT_*` defaults, a reference declared twice, and a backtick inside an expression. The `patch` command writes a copy they accept:
 
 ```bash
 npx dbml2drizzle patch db/db.dbml          # → db/db-patch.dbml
@@ -653,13 +653,18 @@ npx dbdocs build ./db/db-patch.dbml
 
 | `db.dbml` | `db-patch.dbml` |
 |---|---|
-| `account_id integer [ref: > accounts.id, delete: cascade, not null] // owner` | `account_id integer [not null] // owner`, plus `Ref: orders.account_id > accounts.id [delete: cascade]` at the end of the file |
+| `account_id integer [ref: > accounts.id, delete: cascade, not null] // owner` | `account_id integer [not null] // owner`, plus `Ref: orders.account_id > accounts.id [delete: cascade]` at the end of the file; a table or column name that is not a plain identifier is quoted: `Ref: "order items".order_id > orders.id […]` |
+| `created_at timestamptz [default: now()]` (also `CURRENT_TIMESTAMP`, `CURRENT_DATE`, `CURRENT_TIME`, any case) | ``created_at timestamptz [default: `now()`]`` |
+| a reference declared more than once, e.g. `id integer [pk, ref: < orders.account_id]` and `Ref: orders.account_id > accounts.id` | the declaration read first is kept: inline references and `Ref { }` entries in file order, then standalone `Ref:` lines. A repeated `Ref:` line or `Ref { }` entry is removed (a `Ref { }` left empty is removed whole); a repeated inline `ref:` is removed from its column, with its `delete:` / `update:` |
+| ``code varchar [not null, check: `code <> '\`'`]`` | ``code varchar [not null] // check <table>_code_check: `code <> '\`'` ``: standard DBML cannot hold a backtick in an expression, so the check is kept as a comment |
+| `` `code not like '%\`%'` [name: 'no_bt'] `` in `checks { }`, `` `replace(a, '\`', '')` [name: 'a_clean'] `` in `indexes { }` | `` // check no_bt: `code not like '%\`%'` [name: 'no_bt'] ``, `` // index a_clean: `replace(a, '\`', '')` [name: 'a_clean'] `` |
 | `Note: {` | `Note {` |
 | `Enum s { Note: 'Lifecycle'` … `new` … `}` | the `Note` is removed and moved onto the first value: `new [note: 'Lifecycle']`; if that value has a note, `'Lifecycle (its note)'` |
 | ``email [unique, where: `deleted_at is null`, note: 'active users']`` | `email [unique, note: 'active users (where deleted_at is null)']`; without a note, `note: 'where …'` is added |
 | everything else | copied unchanged |
 
 - Moved references are appended under the comment `// Relationships moved from inline settings by dbml2drizzle`.
+- Any DBML that converts without errors gives a copy `@dbml/core` accepts. If it does not, please report it as a bug.
 - `db.dbml` is never modified.
 - Regenerate the copy whenever `db.dbml` changes.
 
