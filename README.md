@@ -27,6 +27,7 @@ You keep the database design in `db.dbml`. This package turns it into a `schema.
 - [Command line](#command-line)
 - [JavaScript API](#javascript-api)
 - [DBML reference](#dbml-reference)
+  - [Views](#views)
 - [The generated schema](#the-generated-schema)
 - [Relations](#relations)
 - [Renaming a table or column](#renaming-a-table-or-column)
@@ -117,7 +118,7 @@ Both give the same objects, so `error instanceof DbmlError` holds however the pa
 
 ```ts
 import { generateSchema, DbmlError } from "dbml2drizzle";
-import type { DialectId, ErrorEntry, Schema } from "dbml2drizzle";
+import type { DialectId, ErrorEntry, Schema, View } from "dbml2drizzle";
 ```
 
 | Function | Returns |
@@ -126,7 +127,7 @@ import type { DialectId, ErrorEntry, Schema } from "dbml2drizzle";
 | `writeSchema(dbmlPath, { dialect = "pg", outPath })` | The written path. Nothing is written when the DBML has errors. |
 | `generateDbPatch(dbmlText)` | The dbdocs-ready DBML as a string. |
 | `writeDbPatch(dbmlPath, { outPath })` | The written path. |
-| `parseSchema(dbmlText)` | The parsed, dialect-neutral schema description (`{ tables, enums, relationships, patchEdits }`). |
+| `parseSchema(dbmlText)` | The parsed, dialect-neutral schema description (`{ tables, enums, views, relationships, patchEdits }`). |
 | `dialects` | The supported targets: `["pg", "sqlite"]`. |
 | `DbmlError` | Thrown for DBML problems. `error.errors` is `[{ line, table, column, message }]`. |
 
@@ -405,8 +406,56 @@ Table events {
 - **On a table**: one `checks { }` block, one `` `<expression>` [name: '<name>'] `` per line. `name` is required and is the only setting, so names stay the same when checks are added or reordered.
 - Drizzle declares every check on the table, so column checks are emitted there too: column checks first, in column order, then table checks in block order.
 - The expression is copied exactly as written and is not validated; the database reports invalid SQL. Write `` \` `` for a backtick inside it.
+- An expression stays on one line. Backtick expressions may span lines only in a view's `as:` query (see [Views](#views)); a multi-line `check:`, `checks { }`, `where:` or index expression is an error.
 - Check names must be unique across the schema.
 - Standard DBML accepts both forms, so `dbml2drizzle patch` copies them unchanged.
+
+### Views
+
+```dbml
+View active_accounts {
+  id integer [not null]
+  email varchar(100) [note: 'login']
+  status account_status
+  as: `select id, email, status
+       from accounts
+       where status = 'active'`
+  Note: 'Accounts that can log in'
+}
+
+View sales_by_day [materialized] {
+  day date [not null]
+  total decimal(12, 2)
+  as: `select created_at::date, sum(amount) from orders group by 1`
+}
+```
+
+```ts
+/** Accounts that can log in */
+export const active_accounts = pgView("active_accounts", {
+  id: integer("id").notNull(),
+  /** login */
+  email: varchar("email", { length: 100 }),
+  status: account_status("status"),
+}).as(sql`select id, email, status
+       from accounts
+       where status = 'active'`);
+
+export const sales_by_day = pgMaterializedView("sales_by_day", {
+  day: date("day").notNull(),
+  total: numeric("total", { precision: 12, scale: 2 }),
+}).as(sql`select created_at::date, sum(amount) from orders group by 1`);
+```
+
+- **Block**: `View <name> [materialized] { … }` at the top level, with one column per line, exactly one ``as: `<query>` `` line and an optional `Note` (a `Note: '…'` line or a `Note { }` block). Names may be `"double-quoted"`; an alias (`View v as V`) is ignored.
+- **Columns** declare the view's result types, because the query is not read. Types are mapped as for table columns, including shared `Enum` types (an inline `enum(…)` is an error). The only column settings are `not null` and `note`.
+- **Query**: copied exactly as written and not validated; the database reports invalid SQL. It may span several lines, and its line breaks are kept. Write `` \` `` for a backtick inside it.
+- **Targets**: `pgView` / `pgMaterializedView` on PostgreSQL, `sqliteView` on SQLite. SQLite has no materialized views, so `[materialized]` is an error there. On SQLite an enum column of a view is `text("c", { enum: … })` without a check: a view has no constraints, and the base table's check enforces the values.
+- **Order**: views are emitted after all tables, in DBML file order, so a view may be declared before the tables it selects from. When a view selects from another view, declare that one first: views are not reordered.
+- **Notes** become JSDoc comments, as for tables.
+- Views have no relations, keys, indexes or checks, and a `Ref` cannot target one.
+- drizzle-kit creates views in the migration. When a query changes, drizzle-kit may drop and recreate the view. Refreshing a materialized view (`REFRESH MATERIALIZED VIEW`) is up to your application.
+- Views managed outside drizzle-kit (`.existing()`) and view options such as `check_option`, `security_barrier` or `with no data` are not supported.
 
 ### Project, TableGroup and comments
 
@@ -420,7 +469,8 @@ Sections always come in this order, so the same DBML gives a byte-identical file
 2. Imports, with names sorted: `drizzle-orm` (`relations`, `sql`) and the target's module (`drizzle-orm/pg-core` or `drizzle-orm/sqlite-core`). Only what is used is imported.
 3. Enums, in table and column file order.
 4. Tables, in DBML file order. Each table's extra config lists the composite primary key, then the composite foreign keys, then the indexes.
-5. Relations (see [Relations](#relations)).
+5. Views, in DBML file order (see [Views](#views)).
+6. Relations (see [Relations](#relations)).
 
 **Identifiers:**
 - **Column keys**: the database name as is, quoted when it isn't a valid JavaScript identifier (`"first-name": varchar("first-name")`).
@@ -593,6 +643,7 @@ export const accounts = sqliteTable("accounts", {
 | `Index type '<TYPE>' is not supported on SQLite` | An index with `type:`. Reported at the table's line. |
 | `Check name '<name>' is declared and also generated for enum column <table>.<column>` | A declared check named like a generated enum check. |
 | `Type '<type>' has no SQLite mapping` | A known DBML type SQLite can't express. |
+| `Materialized views are not supported on SQLite` | A `View` with `[materialized]`. Reported at the view's line. |
 
 ## Errors
 
@@ -635,6 +686,18 @@ The whole file is checked before anything is written. Every problem is reported 
 | `Default '<value>' is not a value of enum '<name>' (…)` | A default outside the column's enum. |
 | `Enum name '<a>' and '<b>' both become '<id>' in generated code` | Two enum names that become the same identifier. |
 | `Duplicate table` / `Duplicate column` / `Table has no columns` | As described. |
+| `View is missing its name` / `Schema-qualified view names are not supported: '<name>'` / `Unknown view setting '<setting>'` | A `View` header that cannot be used. The only view setting is `materialized`. |
+| ``View '<name>' has no query; add as: `select …` `` / `View '<name>' has more than one query` | A `View` without an `as:` line, or with two. |
+| ``as must be a backtick expression, e.g. as: `select …` `` / `View query is empty` | A quoted string instead of a backtick expression, or ``as: `` ``. |
+| `View has no columns` | A `View` without column lines. |
+| `'<setting>' is not allowed on a view column` | `pk`, `primary key`, `null`, `unique`, `default`, `increment`, `ref`, `delete`, `update` or `check` on a view column. |
+| `A view column cannot declare an enum; use an Enum block` | An inline `enum(…)` type on a view column. |
+| `'<block>' is not allowed inside a View` | `indexes`, `checks` or another nested block inside a `View`. |
+| `Duplicate view '<name>' (also on line <n>)` | Two `View` blocks with one name. |
+| `View '<name>' has the same name as table '<name>' (line <n>)` / `View '<name>' has the same name as enum '<name>' (line <n>)` / `View '<name>' has the same name as the enum type of <table>.<column> (line <n>)` | A view name already taken in the database. |
+| `View name '<a>' and '<b>' both become '<id>' in generated code` | A view whose export name is taken by a table, enum, view or `<table>Relations` export. |
+| ``Backtick expression is missing its closing ` `` | A backtick expression still open at the end of the file. Reported at the line that opened it. |
+| `Backtick expressions may span lines only in a View's as: query` | A `check:`, `checks { }`, `where:`, index or default expression spanning lines. |
 | `Unknown block '<word>'` / `'<block>' must be inside a Table` / `'<block>' is not allowed inside a Table` | A block in the wrong place. |
 | `Block '<header>' is missing its closing '}'` / `Unexpected '}'` / `Unexpected line '<text>'` | Unbalanced braces or stray text. |
 
@@ -644,7 +707,7 @@ The package checks the **DBML**: syntax, types, references, conflicting declarat
 
 ## Documentation with dbdocs
 
-Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject some parts of this project's dialect: `delete:` / `update:` inside a column's settings, `Note: {` blocks, `where:` on an index, a `Note` inside an `Enum`, unquoted `now()` / `CURRENT_*` defaults, a reference declared twice, and a backtick inside an expression. The `patch` command writes a copy they accept:
+Standard DBML tools (dbdocs, dbdiagram, `@dbml/core`) reject some parts of this project's dialect: `delete:` / `update:` inside a column's settings, `Note: {` blocks, `where:` on an index, a `Note` inside an `Enum`, unquoted `now()` / `CURRENT_*` defaults, a reference declared twice, a backtick inside an expression, and `View` blocks. The `patch` command writes a copy they accept:
 
 ```bash
 npx dbml2drizzle patch db/db.dbml          # → db/db-patch.dbml
@@ -658,6 +721,7 @@ npx dbdocs build ./db/db-patch.dbml
 | a reference declared more than once, e.g. `id integer [pk, ref: < orders.account_id]` and `Ref: orders.account_id > accounts.id` | the declaration read first is kept: inline references and `Ref { }` entries in file order, then standalone `Ref:` lines. A repeated `Ref:` line or `Ref { }` entry is removed (a `Ref { }` left empty is removed whole); a repeated inline `ref:` is removed from its column, with its `delete:` / `update:` |
 | ``code varchar [not null, check: `code <> '\`'`]`` | ``code varchar [not null] // check <table>_code_check: `code <> '\`'` ``: standard DBML cannot hold a backtick in an expression, so the check is kept as a comment |
 | `` `code not like '%\`%'` [name: 'no_bt'] `` in `checks { }`, `` `replace(a, '\`', '')` [name: 'a_clean'] `` in `indexes { }` | `` // check no_bt: `code not like '%\`%'` [name: 'no_bt'] ``, `` // index a_clean: `replace(a, '\`', '')` [name: 'a_clean'] `` |
+| ``View x [materialized] { <columns> … as: `<query>` … Note: '<note>' }`` | `Table x { Note: '''Materialized view: x⏎<query>⏎⏎<note>''' <columns> }` (`View: x` for a plain view): the view appears as a table with its columns, and its note holds the query (quotes and backslashes escaped, so it reads back exactly) and the view's note. The `as:` and `Note` lines are removed. |
 | `Note: {` | `Note {` |
 | `Enum s { Note: 'Lifecycle'` … `new` … `}` | the `Note` is removed and moved onto the first value: `new [note: 'Lifecycle']`; if that value has a note, `'Lifecycle (its note)'` |
 | ``email [unique, where: `deleted_at is null`, note: 'active users']`` | `email [unique, note: 'active users (where deleted_at is null)']`; without a note, `note: 'where …'` is added |

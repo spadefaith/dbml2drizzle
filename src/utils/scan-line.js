@@ -4,16 +4,20 @@
  * Quotes ('...', "...", `...` and '''...''') are tracked across lines, so
  * braces, brackets and `//` inside quoted text are ignored.
  *
- * Returns [{ line, raw, code, commentIndex, opens, closes, continues }] where
- * `line` is 1-based, `code` is trimmed, `commentIndex` is where the comment
- * starts in `raw` (-1 when there is none), and `continues` is true when a
- * '''multi-line string''' is still open at the end of the line.
+ * Returns [{ line, raw, code, commentIndex, opens, closes, continues, backtick }]
+ * where `line` is 1-based, `code` is trimmed, `commentIndex` is where the
+ * comment starts in `raw` (-1 when there is none), `continues` is true when a
+ * '''multi-line string''' or a `backtick expression` is still open at the end
+ * of the line, and `backtick` when that open string is a backtick expression.
+ * When a string is still open at the end of the text, the last line also has
+ * `opensAt`: the line where that string started.
  */
 module.exports = function scanText(text) {
   const rawLines = text.split(/\r?\n/);
   let quote = null;
+  let opensAt = 0;
 
-  return rawLines.map((raw, index) => {
+  const scanned = rawLines.map((raw, index) => {
     let commentIndex = -1;
     let opens = 0;
     let closes = 0;
@@ -35,9 +39,11 @@ module.exports = function scanText(text) {
 
       if (raw.startsWith("'''", i)) {
         quote = "'''";
+        opensAt = index + 1;
         i += 2;
       } else if (c == "'" || c == '"' || c == "`") {
         quote = c;
+        opensAt = index + 1;
       } else if (c == "/" && raw[i + 1] == "/") {
         commentIndex = i;
         break;
@@ -48,11 +54,15 @@ module.exports = function scanText(text) {
       }
     }
 
-    // single-line quotes never continue onto the next line
-    quote != "'''" && (quote = null);
+    // '...' and "..." never continue onto the next line
+    (quote == "'" || quote == '"') && (quote = null);
 
     const code = (commentIndex > -1 ? raw.substring(0, commentIndex) : raw).trim();
 
-    return { line: index + 1, raw, code, commentIndex, opens, closes, continues: quote == "'''" };
+    return { line: index + 1, raw, code, commentIndex, opens, closes, continues: quote != null, backtick: quote == "`" };
   });
+
+  quote && scanned.length && (scanned[scanned.length - 1].opensAt = opensAt);
+
+  return scanned;
 };

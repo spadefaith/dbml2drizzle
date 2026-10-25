@@ -45,11 +45,21 @@
 - Not breaking: `require("dbml2drizzle")`, internal paths such as
   `dbml2drizzle/src/parse-schema.js`, the command-line tool and the generated output are unchanged.
 
+- Views: top-level `View name { <columns>  as: `<query>`  Note }` blocks. Each becomes a `pgView` /
+  `sqliteView` with the declared columns and the query copied as written, after the tables and before
+  the relations; `View name [materialized]` becomes a `pgMaterializedView` on PostgreSQL (an error on
+  SQLite). The `as:` query may span several lines. In `db-patch.dbml` a view becomes a `Table` of the
+  same name and columns, whose note holds the query and the view's note. `parseSchema()` returns a
+  `views` array, and the `View` type is exported. DBML without `View` blocks gives the same output as
+  before.
+
 ### Changed
 
 - The error `Expression indexes are not supported` is gone.
 - The error `Enum blocks are not supported; use an inline enum('a','b') type` is gone.
 - `parseSchema()` returns an `enums` array.
+- The error `Unknown block 'View'` is gone. A backtick expression spanning lines outside a view's
+  `as:` query, or left open at the end of the file, is now reported as such.
 
 ### Fixed
 

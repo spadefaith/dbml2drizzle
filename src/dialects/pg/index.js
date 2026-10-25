@@ -15,6 +15,8 @@ module.exports = {
   tableBuilder: "pgTable",
   enumBuilder: "pgEnum",
   checkBuilder: "check",
+  viewBuilder: "pgView",
+  materializedViewBuilder: "pgMaterializedView",
   anyColumnType: "AnyPgColumn",
   columnCall,
   defaultModifier,

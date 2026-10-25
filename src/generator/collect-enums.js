@@ -6,7 +6,7 @@ const { exportName } = require("./identifiers");
  * column, named enum_<table>_<column> (the name earlier versions of this
  * package gave the type), in table and column file order:
  * [{ ref, exportName, dbName, values, notes } | { table, column, exportName, dbName, values }].
- * Reports an `Enum` block whose name is an inline enum's type name.
+ * Reports an `Enum` block or a view whose name is an inline enum's type name.
  */
 function collectEnums(schema, collector) {
   const shared = (schema.enums || []).map((e) => ({
@@ -31,6 +31,15 @@ function collectEnums(schema, collector) {
             line: clash.line,
             message: `Enum '${clash.dbName}' has the same name as the enum type of ${table.name}.${column.name} (line ${column.line})`,
           });
+
+        for (const view of (schema.views || []).filter((item) => item.name == dbName)) {
+          collector &&
+            collector.add({
+              table: view.name,
+              line: view.line,
+              message: `View '${view.name}' has the same name as the enum type of ${table.name}.${column.name} (line ${column.line})`,
+            });
+        }
 
         return {
           table: table.name,

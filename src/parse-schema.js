@@ -15,6 +15,7 @@ const convertNote = /** @type {typeof import("./converter/convert-note") & { cle
 const resolveRelationships = require("./converter/resolve-relationships");
 const parseRefLine = require("./parser/parse-ref-line");
 const parseEnum = require("./parser/parse-enum");
+const parseView = require("./parser/parse-view");
 const { cleanNote } = convertNote;
 const { expressionOf } = convertChecks;
 const { RENAMED_FROM_MESSAGE } = convertAttributes;
@@ -292,7 +293,8 @@ function parseTable(block, definition, collector, enums) {
 /**
  * Parses DBML text into the schema description (see
  * specs/001-dbml-to-migration/data-model.md):
- * { tables, enums, relationships, patchEdits }.
+ * { tables, enums, views, relationships, patchEdits }; `views` are in file
+ * order (specs/012-dbml-views/data-model.md).
  * Throws one DbmlError listing every problem found.
  *
  * @param {string} text
@@ -310,6 +312,8 @@ module.exports = function parseSchema(text) {
   const enums = [];
   /** @type {Map<string, Enum>} */
   const enumsByName = new Map();
+  /** @type {import("./types").View[]} */
+  const views = [];
   /** @type {{ table: string, columnLines: ColumnLine[] }[]} */
   const tableColumnLines = [];
   /** @type {Block[]} */
@@ -355,6 +359,18 @@ module.exports = function parseSchema(text) {
       rawRefs = rawRefs.concat(parsed.rawRefs);
       patchEdits = patchEdits.concat(parsed.patchEdits);
       tableColumnLines.push({ table: parsed.table.name, columnLines: parsed.columnLines });
+    } else if (definition.type == "View") {
+      const { view, patchEdits: viewEdits } = parseView(block, definition, collector, enumsByName);
+      const first = views.find((item) => item.name == view.name);
+
+      if (first) {
+        collector.add({ table: view.name, line: block.line, message: `Duplicate view '${view.name}' (also on line ${first.line})` });
+        continue;
+      }
+
+      // a column with an invalid type keeps type null; its collected error stops parsing
+      views.push(/** @type {import("./types").View} */ (/** @type {unknown} */ (view)));
+      patchEdits = patchEdits.concat(viewEdits);
     } else if (definition.type == "Ref") {
       refBlocks.push(block);
       for (const item of block.items) {
@@ -381,6 +397,13 @@ module.exports = function parseSchema(text) {
     const table = tables.find((item) => item.name == name);
     table && collector.add({ line, message: `Enum '${name}' has the same name as table '${name}' (line ${table.line})` });
   }
+
+  for (const { name, line } of views) {
+    const table = tables.find((item) => item.name == name);
+    const sharedEnum = enumsByName.get(name);
+    table && collector.add({ table: name, line, message: `View '${name}' has the same name as table '${name}' (line ${table.line})` });
+    sharedEnum && collector.add({ table: name, line, message: `View '${name}' has the same name as enum '${name}' (line ${sharedEnum.line})` });
+  }
   const checkLinesByName = new Map();
 
   for (const { name: table, checks } of tables) {
@@ -402,5 +425,5 @@ module.exports = function parseSchema(text) {
   );
   patchEdits.sort((a, b) => a.line - b.line);
 
-  return { tables, enums, relationships, patchEdits };
+  return { tables, enums, views, relationships, patchEdits };
 };

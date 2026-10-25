@@ -23,6 +23,7 @@ module.exports = function generateDbPatch(dbmlText) {
 
   for (const edit of patchEdits) {
     edit.replacement != undefined && (lines[edit.line - 1] = edit.replacement);
+    edit.replacementLines != undefined && (lines[edit.line - 1] = edit.replacementLines.join(eol));
   }
 
   // removals win over replacements of the same line (e.g. `Note: {` inside an Enum)

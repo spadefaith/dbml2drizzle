@@ -16,6 +16,7 @@ const { DbmlError } = require("./errors");
 /** @typedef {import("./types").Index} Index */
 /** @typedef {import("./types").Check} Check */
 /** @typedef {import("./types").Enum} Enum */
+/** @typedef {import("./types").View} View */
 /** @typedef {import("./types").Relationship} Relationship */
 /** @typedef {import("./types").PatchEdit} PatchEdit */
 /** @typedef {import("./types").ErrorEntry} ErrorEntry */

@@ -1,0 +1,640 @@
+Project GoalHive {
+  database_type: 'postgres'
+  Note: 'This is the database schema for the GoalHive project. Views maintained by the developer as migrations: fund_balance_views, journal_views, transaction_views, wallet_views. Their definitions and every [C] constraint (expression/partial indexes and CHECKs the generator cannot express) are in specs/001-schema-redesign/data-model.md.'
+}
+
+Table kycs {
+  id integer [primary key, not null, increment]
+  first_name varchar(100)
+  middle_name varchar(100)
+  last_name varchar(100)
+  birthdate varchar(100)
+  mobile_no varchar(100) [note: 'mobile number of the user', unique, null]
+  email varchar(100) [note: 'unique email address for the user', unique]
+
+  civil_status varchar(50)
+  gender varchar(50)
+
+  created_by integer [ref: > accounts.id, delete:set null]
+  modified_by integer [ref: > accounts.id, delete:set null]
+  is_active boolean [default: 1]
+  modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+  created_dt timestamp [default:`now()`]
+}
+
+Table accounts {
+  id integer [primary key, not null, increment]
+  username varchar(50) [note: 'unique username for the account', unique]
+  password varchar(100)
+  temp_password varchar(100) [note: 'temporary password for account activation']
+  token text
+
+  sso boolean [default: 0, note: 'indicates if the KYC was created via SSO']
+  sso_provider varchar(50) [note: 'e.g. google, facebook, twitter']
+  image_url text [note: 'URL of the user profile image']
+
+  status varchar(50)
+
+  send_reset_password_link boolean [default: 0, note: 'indicates if the reset password link will be sent']
+
+  created_by integer [ref: > accounts.id, delete:set null]
+  modified_by integer [ref: > accounts.id, delete:set null]
+  is_active boolean [default: 1]
+  modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+  created_dt timestamp [default:`now()`]
+}
+
+Table account_kycs {
+  id integer [primary key, not null, increment]
+  account_id integer [ref: > accounts.id, delete:cascade, not null]
+  kyc_id integer [ref: - kycs.id, delete:cascade, not null]
+
+  created_by integer [ref: > accounts.id, delete:set null]
+  modified_by integer [ref: > accounts.id, delete:set null]
+  is_active boolean [default: 1]
+  modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+  created_dt timestamp [default:`now()`]
+}
+
+Table roles {
+    id integer [primary key, not null, increment]
+    name varchar(50) [unique]
+    description text
+    
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table account_roles {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:cascade, not null]
+    role_id integer [ref: > roles.id, delete:cascade, not null]
+    
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table permissions {
+    id integer [primary key, not null, increment]
+    name varchar(50) [unique]
+    description text
+
+    scope varchar(100)
+    sequence integer
+    
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table role_permissions {
+    id integer [primary key, not null, increment]
+    role_id integer [ref: > roles.id, delete:cascade, not null]
+    permission_id integer [ref: > permissions.id, delete:cascade, not null]
+    
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table enums {
+    id integer [primary key, not null, increment]
+    name varchar(100) [not null]
+    type varchar(50) [note: 'e.g. gender, civil_status']
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    indexes {
+        (name, type) [unique]
+    }
+}
+
+
+Table settings {
+    id integer [primary key, not null, increment]
+    key varchar(100) 
+    value text
+    description text
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table account_settings {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:cascade, not null]
+    setting_id integer [ref: > settings.id, delete:cascade, not null]
+    value text
+  
+    indexes {
+        (account_id, setting_id) [unique, note: 'unique combination of account and setting']
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table templates{
+    id integer [primary key, not null, increment]
+    name varchar(100) [note: 'name of the email template']
+    body text
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table knowledge_bases {
+    id integer [primary key, not null, increment]
+    context_id varchar(100)
+    category varchar(50) [note: 'category of the article, e.g. FAQ, Guide, Tutorial']
+    content text
+    keywords text
+    questions text
+    status varchar(50) [note: 'Draft, Published, Archived']
+
+    indexes {
+        category
+        keywords
+        questions
+        status
+        content [unique]
+        context_id [unique]
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table chats {
+    id integer [primary key, not null, increment]
+    question text
+    answer text
+    user_id integer [ref: > accounts.id, delete:cascade, not null, note: 'the user who asked the question']
+    context_count integer
+    contexts text
+    max_score decimal
+    min_score decimal
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table account_groups {
+    id integer [primary key, not null, increment]
+    uuid varchar(100)
+    account_id integer [ref: > accounts.id, delete:cascade, not null]
+    name varchar(100) [note: 'e.g. personal, family, business', not null, unique]
+    description text
+
+    indexes {
+        (uuid, account_id, name) [unique]
+    }
+
+
+    is_active boolean [default: 1]
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table audit_logs {
+    id integer [primary key, not null, increment]
+    action varchar(100)
+    message text
+    source varchar(100)
+    reference_id integer
+
+    indexes {
+        action
+        reference_id
+        source
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    created_dt timestamp [default:`now()`]
+}
+
+Table categories {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:cascade, null, note: 'NULL = template row']
+    name varchar(100) [note: 'e.g. Food, Rent, Laptop', not null]
+    type enum('essentials','goals') [note: 'e.g. essentials, goals', not null]
+    budget_amount decimal(18,2) [null]
+    icon varchar(100) [note: 'icon representing the category']
+
+    indexes {
+        account_id
+        type
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    Note: {
+        '[C] categories_account_type_name_uq UNIQUE (account_id, type, lower(name)) WHERE account_id IS NOT NULL; [C] categories_template_type_name_uq UNIQUE (type, lower(name)) WHERE account_id IS NULL; [C] categories_budget_amount_ck CHECK (budget_amount IS NULL OR budget_amount >= 0)'
+    }
+}
+
+Table goals {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:cascade, not null]
+    category_id integer [ref: > categories.id, delete:restrict, not null]
+    name varchar(100) [not null]
+    target_amount decimal(18,2) [not null]
+    start_date dateonly [not null]
+    target_date dateonly [not null]
+    priority integer [not null]
+    note text [null]
+
+    indexes {
+        account_id
+        category_id
+        (account_id, target_date)
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    Note: {
+        '[C] goals_target_amount_ck CHECK (target_amount > 0); [C] goals_dates_ck CHECK (target_date >= start_date). Category must be the owner and of type goals (application rule).'
+    }
+}
+
+Table items {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:set null]
+    name varchar(100) [note: 'e.g. groceries, rent, utilities', not null]
+
+    category_id integer [ref: > categories.id, delete:set null]
+
+    start_date varchar(50)
+    end_date varchar(50)
+
+    priority integer [not null]
+
+    //for essentials only
+
+    details jsonb [note: 'JSON object defining the recurrence pattern']
+
+    status varchar(50) [note: 'e.g. active, paused, completed']
+
+    realized_date varchar(50) [note: 'date when the item was realized or completed']
+    realized_amount decimal(18,2) [note: 'actual amount spent or received']
+
+    indexes {
+        start_date
+        end_date
+        category_id
+        name
+        account_id
+
+        (account_id,name,category_id) [unique]
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table recur_items {
+    id integer [primary key, not null, increment]
+    item_id integer [ref: > items.id, delete:cascade, not null, unique]
+    
+    type enum('fixed','repeat') [note: 'recurrence type', not null]
+    future_date varchar(50) [note: 'next scheduled date for the item']
+    cron varchar(100) [note: 'cron expression for scheduling', not null]
+    frequency enum('daily','weekly','monthly','month_start','month_end','month_mid') [note: 'recurrence type', not null]
+    schedule enum('weekday','date') [note: 'scheduling method']
+    weekday integer [note: '0=Sunday, 1=Monday, ..., 6=Saturday for byweekday schedule']
+    day_no integer [note: 'dates of the month for bydate schedule']
+    week_no integer [note: 'week number for monthly byweekday schedule']
+    amount decimal(18,2) [not null, note: 'default amount for the item']
+
+    indexes {
+        item_id
+        frequency
+        schedule
+        weekday
+        day_no
+        week_no
+    }     
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+
+Table notifications {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:set null]
+    context enum('info','warning','alert') [note: 'e.g. Info, Warning, Alert', not null]
+    type varchar(50) [note: 'e.g. insufficient_funds, payment_success, due_date_reminder']
+    message text [note: 'notification message content', not null]
+    is_read boolean [default: 0]
+    read_at timestamp [note: 'when the notification was read']
+
+    item_id integer [ref: > items.id, delete:set null]
+    fund_id integer [ref: > funds.id, delete:set null]
+    loan_id integer [ref: > loans.id, delete:set null]
+    credit_card_id integer [ref: > credit_cards.id, delete:set null]
+    lend_id integer [ref: > lends.id, delete:set null]
+    journal_id integer [ref: > journals.id, delete:set null]
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    indexes {
+        account_id
+        item_id
+        fund_id
+        loan_id
+        credit_card_id
+        lend_id
+        journal_id
+        type
+    }    
+}
+
+
+Table funds {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:cascade, not null]
+    name varchar(100) [note: 'e.g. Checking, Savings, PayPal', not null]
+    source varchar(100) [note: 'e.g. bank, digital wallet', not null]
+    description text [null]
+
+    indexes {
+        account_id
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    Note: {
+        '[C] funds_account_name_uq UNIQUE (account_id, lower(name)). Balance = fund_balance_views (sum of journal_entries tagged with the fund).'
+    }
+}
+
+Table vendors {
+    id integer [primary key, not null, increment]
+    name varchar(100) [note: 'name of the vendor or payee', not null, unique]
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table credit_cards {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:set null]
+    name varchar(100) [note: 'e.g. Visa, MasterCard', not null]
+    credit_limit decimal(18,2) [not null]
+    cutoff_date integer [note: 'day of the month for billing cycle cutoff', not null]
+    due_date integer [note: 'day of the month for payment due', not null]
+    description text [note: 'description']
+    
+    interest_rate decimal(18,2) [note: 'annual interest rate as a percentage', not null]
+    bank varchar(100) [note: 'issuing bank of the credit card', not null]
+    minimum_payment decimal(18,2) [note: 'minimum payment amount', not null]
+    auto_payment varchar(50) [note: 'active, paused, cancelled, etc.', default: 'active']
+
+    indexes {
+        (name, account_id, bank) [unique]
+        account_id
+        name
+        due_date
+        cutoff_date
+        auto_payment
+    }
+
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table loans {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:set null]
+    name varchar(100) [note: 'e.g. Home Loan, Car Loan', not null]
+    principal_amount decimal(18,2) [not null]
+    due_date integer [note: 'day of the month for payment due', not null]
+    auto_payment varchar(50) [note: 'active, paused, cancelled, etc.', default: 'active']
+    interest_rate decimal(18,2) [not null]
+    term_months integer [not null]
+    start_date varchar(50) [not null]
+    end_date varchar(50) [not null]
+    monthly_payment decimal(18,2) [not null]
+    loan_proceeds decimal(18,2) [not null]
+    institution varchar(100) [note: 'e.g. Bank, Credit Card Company', not null]
+    description text [note: 'description of the loan']
+    reference_id varchar(100)
+    details jsonb [note: 'additional details in JSON format']
+
+    indexes {
+        (name, account_id) [unique]
+        account_id
+        name
+        due_date
+        auto_payment
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table lends {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:set null]
+    first_name varchar(100) [note: 'first name of the borrower', not null]
+    last_name varchar(100) [note: 'last name of the borrower', not null]
+    address text [note: 'address of the borrower']
+
+    principal_amount decimal(18,2) [not null]
+    due_date integer [note: 'day of the month for payment due', not null]
+    interest_rate decimal(18,2) [not null]
+    term_months integer [not null]
+    start_date varchar(50) [not null]
+    end_date varchar(50) [not null]
+    monthly_payment decimal(18,2) [not null]
+    loan_proceeds decimal(18,2) [not null]
+    description text [note: 'description of the loan']
+    details jsonb [note: 'additional details in JSON format']
+
+    indexes {
+        account_id
+        first_name
+        last_name
+        due_date
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}
+
+Table chart_accounts {
+    id integer [primary key, not null, increment]
+    name varchar(100) [note: 'e.g. Funds, Income, Expense', not null, unique]
+    type enum('asset','liability','equity','income','expense') [not null]
+    normal_balance enum('debit','credit') [not null]
+
+    indexes {
+        type
+    }
+
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    Note: {
+        'Global, internal chart. Seed in id order: 1 Funds asset/debit, 2 Lend asset/debit, 3 Credit Card liability/credit, 4 Loan liability/credit, 5 Accrued Expense liability/credit, 6 Equity equity/credit, 7 Opening Balance equity/credit, 8 Income income/credit, 9 Expense expense/debit'
+    }
+}
+
+
+Table journals {
+    id integer [primary key, not null, increment]
+    account_id integer [ref: > accounts.id, delete:cascade, not null]
+
+    type enum('deposit','opening_balance','expense','item','fund','loan','credit','lend','item_credit','loan_repayment','credit_repayment','item_credit_accrual','item_accrual','reversal') [note: 'kind of money movement', not null]
+
+    source_type enum('fund','loan','lend','credit_card','item') [note: 'type of the primary record', not null]
+    source_id integer [note: 'id of the primary record; polymorphic, no FK', not null]
+
+    transaction_date dateonly [note: 'date of the money movement', not null]
+    name varchar(100) [null]
+    note text [null]
+
+    indexes {
+        (account_id, transaction_date)
+        (account_id, source_type, source_id)
+        type
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    Note: {
+        'One money movement. Display names and secondary ids live in journal_details. Lines live in journal_entries.'
+    }
+}
+
+Table journal_details {
+    id integer [primary key, not null, increment]
+    journal_id integer [ref: > journals.id, delete:cascade, not null]
+    key varchar(50) [not null]
+    value text [note: 'ids stored as decimal strings', not null]
+
+    indexes {
+        journal_id
+        (journal_id, key) [unique]
+        (key, value)
+    }
+
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    Note: {
+        'Key/value details of a journal; allowed keys in specs/001-schema-redesign/contracts/journal-details.schema.json. [C] journal_details_value_len_ck CHECK (length(value) <= 500)'
+    }
+}
+
+Table journal_entries {
+    id integer [primary key, not null, increment]
+    journal_id integer [ref: > journals.id, delete:cascade, not null]
+    chart_account_id integer [ref: > chart_accounts.id, delete:restrict, not null]
+    description text [null]
+    amount decimal(18,2) [not null]
+    type enum('debit','credit') [note: 'Debit or Credit', not null]
+
+    source_type enum('fund','loan','lend','credit_card') [note: 'sub-account tag', null]
+    source_id integer [note: 'sub-account tag; no FK', null]
+
+    indexes {
+        journal_id
+        chart_account_id
+        (source_type, source_id)
+    }
+
+    created_by integer [ref: > accounts.id, delete:set null]
+    modified_by integer [ref: > accounts.id, delete:set null]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+
+    Note: {
+        '[C] journal_entries_amount_ck CHECK (amount > 0); [C] journal_entries_tag_pair_ck CHECK ((source_type IS NULL) = (source_id IS NULL)). Lines on Funds/Loan/Lend/Credit Card must carry the matching tag (application rule).'
+    }
+}
+
+Table message_logs {
+    id integer [primary key, not null, increment]
+    receivers text('long')
+    template_id integer [ref: > templates.id, delete:set null, not null]
+    type varchar(50) [note: 'Email, SMS, Push Notification']
+    process varchar(50) [note: 'synchronous, asynchronous']
+    status varchar(50) [note: 'Sent, Failed, Pending']
+    sent_at timestamp [note: 'when the message was sent']
+    provider varchar(50) [note: 'mailjet, smtpgo']
+    error_message text('long')
+    created_by varchar(50)
+    modified_by varchar(50)
+    is_active boolean [default: 1]
+    modified_dt timestamp [default:`CURRENT_TIMESTAMP`]
+    created_dt timestamp [default:`now()`]
+}

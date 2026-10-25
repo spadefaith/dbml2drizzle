@@ -9,8 +9,22 @@
  * @typedef {object} Schema
  * @property {Table[]} tables
  * @property {Enum[]} enums
+ * @property {View[]} views
  * @property {Relationship[]} relationships
  * @property {PatchEdit[]} patchEdits
+ */
+
+/**
+ * A `View` block (see specs/012-dbml-views/data-model.md). Its columns are
+ * Columns with only `comment` and `allowNull: false` among the settings.
+ *
+ * @typedef {object} View
+ * @property {string} name
+ * @property {boolean} materialized
+ * @property {Column[]} columns
+ * @property {string} query
+ * @property {string} comment
+ * @property {number} line
  */
 
 /**
@@ -94,6 +108,7 @@
  * @typedef {object} PatchEdit
  * @property {number} line
  * @property {string} [replacement]
+ * @property {string[]} [replacementLines] lines that replace `line`, written with the file's line ending (view edits only)
  * @property {string} [appendRef]
  * @property {boolean} [remove]
  */
@@ -155,6 +170,8 @@
  * @property {string} tableBuilder
  * @property {string | null} enumBuilder
  * @property {string} checkBuilder
+ * @property {string} viewBuilder builder of a plain view (e.g. pgView)
+ * @property {string | null} materializedViewBuilder builder of a materialized view; null: the target has none
  * @property {string} [anyColumnType] column type of typed reference callbacks in cycles (e.g. AnyPgColumn); absent: references stay untyped
  * @property {(column: Column, location: Location, collector: Collector, table: Table) => ColumnCall | null} columnCall
  * @property {(defaultValue: DefaultValue) => { text: string, usesSql: boolean }} defaultModifier
@@ -184,6 +201,7 @@
  * @property {Item[]} items
  * @property {Block[]} blocks
  * @property {number} [endLine]
+ * @property {number} [commentIndex]
  */
 
 /**

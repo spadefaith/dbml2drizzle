@@ -12,6 +12,7 @@ export { default } from "./index.js";
 /** @typedef {import("./index.js").Index} Index */
 /** @typedef {import("./index.js").Check} Check */
 /** @typedef {import("./index.js").Enum} Enum */
+/** @typedef {import("./index.js").View} View */
 /** @typedef {import("./index.js").Relationship} Relationship */
 /** @typedef {import("./index.js").PatchEdit} PatchEdit */
 /** @typedef {import("./index.js").ErrorEntry} ErrorEntry */

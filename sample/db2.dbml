@@ -1,0 +1,344 @@
+// db2.dbml — a showcase schema that uses every DBML input dbml2drizzle supports.
+// Schema:  node bin/dbml2drizzle.js schema test/db2.dbml --out tmp/db2.schema.ts
+// Patch:   node bin/dbml2drizzle.js patch test/db2.dbml --out tmp/db2-patch.dbml
+
+// ---------------------------------------------------------------------------
+// Project and TableGroup blocks: accepted, not part of the generated schema
+// ---------------------------------------------------------------------------
+
+Project showcase {
+  database_type: 'PostgreSQL'
+  Note: 'Every supported directive in one schema'
+}
+
+TableGroup catalog {
+  shops
+  products
+  product_details
+}
+
+TableGroup sales {
+  accounts
+  orders
+  "order items"
+}
+
+// ---------------------------------------------------------------------------
+// Every column type
+// ---------------------------------------------------------------------------
+
+Table type_samples {
+  id bigint [primary key, increment]           // "primary key" spelled out
+  v_varchar varchar
+  v_varchar_n varchar(120)
+  v_string string
+  v_string_n string(60)                                   // string(n) = varchar(n)
+  v_char char(2)
+  v_text text
+  v_text_tiny text('tiny')
+  v_text_medium text('medium')
+  v_text_long text('long')
+  v_integer integer
+  v_int int
+  v_bigint bigint
+  v_smallint smallint
+  v_decimal decimal
+  v_decimal_ps decimal(18, 2)
+  v_numeric numeric(10, 4)
+  v_float float
+  v_double double
+  v_real real
+  v_boolean boolean
+  v_bool bool
+  v_timestamp timestamp
+  v_timestamp_p timestamp(6)
+  v_timestamptz timestamptz
+  v_datetime datetime
+  v_date date
+  v_dateonly dateonly
+  v_time time
+  v_time_p time(6)
+  v_json json
+  v_jsonb jsonb
+  v_uuid uuid
+  v_enum enum('draft', 'in progress', 'done, archived')   // spaces and commas inside values
+  V_UPPER_TYPE VARCHAR(10)                                // type names are case-insensitive
+
+  Note: 'One column per supported DBML type'
+}
+
+// ---------------------------------------------------------------------------
+// Every column setting and every default form
+// ---------------------------------------------------------------------------
+
+Table setting_samples {
+  id uuid [pk, default: `gen_random_uuid()`]               // backtick expression -> .default(sql`…`)
+  code varchar(20) [unique, not null]
+  nickname varchar(50) [null]                               // explicit null: nullable
+  plain_column varchar(50)                                  // nullable by default
+  status enum('active', 'suspended', 'closed') [not null, default: 'active', note: 'account lifecycle']
+  label varchar(30) [default: "double quoted"]
+  quoted varchar(30) [default: 'it\'s escaped']
+  score integer [default: 42]
+  ratio decimal(5, 2) [default: -1.5]
+  is_one boolean [default: 1]                               // 1 / 0 on boolean -> true / false
+  is_zero boolean [default: 0]
+  is_true boolean [default: true]
+  is_false bool [default: false]
+  optional_text text [default: null]
+  created_at timestamptz [not null, default: `now()`]      // now() -> .defaultNow()
+  updated_at timestamptz [default: now()]
+  stamped_at timestamp [default: CURRENT_TIMESTAMP]         // -> .default(sql`CURRENT_TIMESTAMP`)
+  stamped_on dateonly [default: `CURRENT_DATE`]
+  stamped_time time [default: CURRENT_TIME]
+  lowered varchar(20) [default: `lower('ABC')`]
+  remark varchar(100) [note: 'ratio: 1:2, see https://x.io [not a setting] {not a block} // not a comment']
+}
+
+// ---------------------------------------------------------------------------
+// Notes: every table and column note form
+// ---------------------------------------------------------------------------
+
+Table note_one_line {
+  id integer [pk, note: 'column comment']
+  Note: 'Table note, one line'
+}
+
+Table note_block_colon {
+  id integer [pk]
+  Note: {
+    'Table note in a Note: { } block'
+  }
+}
+
+Table note_block_standard {
+  id integer [pk]
+  Note {
+    'Table note in a standard Note { } block'
+  }
+}
+
+Table note_as_setting [note: 'Table note as a table setting'] {
+  id integer [pk]
+}
+
+Table note_multi_line {
+  id integer [pk]
+  Note: '''
+    First line of a multi-line note.
+    Second line, with { braces } and // slashes kept as text.
+  '''
+}
+
+Table note_not_ddl {
+  id integer [pk]
+  total decimal(12, 2) [note: '[C] note_not_ddl_total_ck CHECK (total > 0)']   // stays a comment, never a CHECK
+  Note: 'Notes are plain text and never become constraints'
+}
+
+// ---------------------------------------------------------------------------
+// Quoted names, aliases and table settings
+// ---------------------------------------------------------------------------
+
+Table accounts [headercolor: #3498DB] {
+  id integer [pk, increment, ref: < orders.account_id]     // "<": the key is created on orders.account_id
+  email varchar(100) [unique, not null, note: 'login, never shared']
+  created_by integer [ref: > accounts.id, delete: set null] // self-reference
+  "display name" varchar(80)                                // quoted column name
+}
+
+Table "order items" as OI [note: 'Line items of an order'] {
+  id integer [pk, increment]
+  order_id integer [not null, ref: > orders.id, delete: cascade, update: cascade]
+  qty smallint [not null, default: 1]
+}
+
+// ---------------------------------------------------------------------------
+// Relationships: inline, standalone, named, block, one-to-one, actions
+// ---------------------------------------------------------------------------
+
+Table orders {
+  id integer [pk, increment]
+  account_id integer [not null]                             // key declared from accounts.id with "<"
+  approved_by integer
+  updated_by integer
+  status_id integer [default: 1, ref: > order_statuses.id, delete: set default]
+  shipper_id integer [ref: > shippers.id, delete: restrict, update: no action]
+  placed_at timestamptz [not null, default: `now()`]
+  details jsonb
+  tracking varchar(40)
+
+  indexes {
+    account_id                                              // unnamed -> orders_account_id
+    (account_id, placed_at) [unique, name: 'orders_by_account']
+    details [type: gin]                                     // index method
+    tracking [type: hash, note: 'lookup by tracking number']
+  }
+}
+
+Table order_statuses {
+  id integer [pk]
+  name varchar(30) [not null, unique]
+}
+
+Table shippers {
+  id integer [pk, increment]
+  name varchar(60) [not null]
+}
+
+Table invoices {
+  id integer [pk, increment]
+  order_id integer [not null, ref: - orders.id]             // one-to-one -> order_id becomes unique
+}
+
+// Standalone reference that agrees with the inline "<" on accounts.id: merged into one key
+Ref: orders.account_id > accounts.id
+
+// Named standalone reference with an action
+Ref order_approver: orders.approved_by > accounts.id [delete: set null]
+
+// Block form, with the ignored "color" setting
+Ref {
+  orders.updated_by > accounts.id [update: cascade, color: #79AD51]
+}
+
+// ---------------------------------------------------------------------------
+// Composite primary keys and composite references
+// ---------------------------------------------------------------------------
+
+Table shops {
+  id integer [pk, increment]
+  name varchar(80) [not null]
+}
+
+Table products {
+  shop_id integer [ref: > shops.id, delete: cascade]
+  code varchar(20)
+  name varchar(120) [not null]
+
+  indexes {
+    (shop_id, code) [pk]                                    // composite primary key, not an index
+  }
+}
+
+Table product_details {
+  shop_id integer
+  code varchar(20)
+  description text
+
+  indexes {
+    (shop_id, code) [pk]
+  }
+}
+
+Table stock_moves {
+  id integer [pk, increment]
+  shop_id integer [not null]
+  code varchar(20) [not null]
+  qty integer [not null]
+}
+
+// Composite many-to-one: one multi-column foreignKey()
+Ref: stock_moves.(shop_id, code) > products.(shop_id, code) [delete: cascade]
+
+// Composite one-to-one: one multi-column foreignKey() (only single-column one-to-one adds unique)
+Ref: product_details.(shop_id, code) - products.(shop_id, code)
+
+// ---------------------------------------------------------------------------
+// A reference cycle: lazy references make the table order irrelevant
+// ---------------------------------------------------------------------------
+
+Table departments {
+  id integer [pk, increment]
+  name varchar(60) [not null]
+  manager_id integer [ref: > employees.id, delete: set null]
+}
+
+Table employees {
+  id integer [pk, increment]
+  department_id integer [ref: > departments.id]
+  boss_id integer [ref: > employees.id]                     // self-reference inside the cycle
+}
+
+// ---------------------------------------------------------------------------
+// Check constraints: column check: and table checks { } block
+// ---------------------------------------------------------------------------
+
+Table events {
+  id integer [pk, increment]
+  title varchar(120) [not null, check: `length(title) > 0`] // column check -> events_title_check
+  seats integer [not null, check: `seats > 0`]
+  starts_at timestamptz [not null]
+  ends_at timestamptz [not null]
+  code varchar(20) [check: `code is null or code <> '\`'`]  // \` = a literal backtick
+
+  checks {
+    `ends_at > starts_at` [name: 'events_valid_range']      // table check, name required
+    `seats <= 500` [name: 'events_seat_limit']
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expression and partial indexes
+// ---------------------------------------------------------------------------
+
+Table users {
+  id integer [pk, increment]
+  email varchar(120) [not null]
+  prefs jsonb
+  deleted_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    `lower(email)` [unique, name: 'users_email_ci']                               // expression alone
+    (`lower(email)`, created_at) [name: 'users_email_created']                    // expression and column
+    `(prefs -> 'tags')` [type: gin, name: 'users_tags']                           // not a function call: parentheses
+    created_at [where: `deleted_at is null`]                                      // partial index
+    email [unique, where: `deleted_at is null`, name: 'users_email_live']         // partial unique index
+    `lower(email)` [where: `deleted_at is not null`, name: 'users_email_deleted'] // partial expression index
+    `replace(email, '\`', '')` [name: 'users_email_no_backtick']                  // escaped backtick
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared enums: one Enum block used by several columns
+// ---------------------------------------------------------------------------
+
+Table tickets {
+  id integer [pk, increment]
+  priority priority_level [not null, default: 'normal']    // uses the Enum block declared below
+}
+
+Table ticket_events {
+  id integer [pk, increment]
+  ticket_id integer [not null, ref: > tickets.id, delete: cascade]
+  priority priority_level                                  // same enum, second table
+}
+
+Enum priority_level {
+  Note: 'How urgent a ticket is'
+  low
+  normal
+  "very high" [note: 'paged on call']                      // quoted value with a note
+}
+
+// ---------------------------------------------------------------------------
+// Views: plain and materialized View blocks
+// ---------------------------------------------------------------------------
+
+// plain view, with a view note and a column note
+View active_users {
+  id integer [not null]
+  email varchar(120) [note: 'login']
+  as: `select id, email from users where deleted_at is null`
+  Note: 'Users that are not deleted'
+}
+
+// materialized view; a column typed by the shared Enum priority_level; a query over three lines
+View ticket_priorities [materialized] {
+  priority priority_level [not null]
+  total bigint
+  as: `select priority, count(*) as total
+    from tickets
+    group by priority`
+}

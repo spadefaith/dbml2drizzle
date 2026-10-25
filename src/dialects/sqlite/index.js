@@ -16,6 +16,9 @@ module.exports = {
   tableBuilder: "sqliteTable",
   enumBuilder: null,
   checkBuilder: "check",
+  viewBuilder: "sqliteView",
+  // SQLite has no materialized views
+  materializedViewBuilder: null,
   anyColumnType: "AnySQLiteColumn",
   columnCall,
   defaultModifier,

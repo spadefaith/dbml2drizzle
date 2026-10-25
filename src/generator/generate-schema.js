@@ -2,7 +2,7 @@
 const parseSchema = require("../parse-schema");
 const { createCollector } = require("../errors");
 const { getDialect } = require("../dialects");
-const { propertyKey, member, tableExports } = require("./identifiers");
+const { propertyKey, member, exportName, tableExports } = require("./identifiers");
 const buildRelations = require("./relations");
 const { findEnum } = require("./collect-enums");
 const leadsBack = require("./cycles");
@@ -45,9 +45,10 @@ const sorted = (set) => [...set].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
 /**
  * Generates the Drizzle schema source for one target dialect from DBML text.
- * Sections come in a fixed order (header, imports, enums, tables, relations;
- * see specs/004-drizzle-schema-generation/data-model.md), so the same DBML
- * always gives the same output. Throws DbmlError listing every problem.
+ * Sections come in a fixed order (header, imports, enums, tables, views,
+ * relations; see specs/004-drizzle-schema-generation/data-model.md and
+ * specs/012-dbml-views/data-model.md), so the same DBML always gives the same
+ * output. Throws DbmlError listing every problem.
  *
  * @typedef {{ dialect?: import("../dialects").DialectId, sourceName?: string }} GenerateSchemaOptions
  *
@@ -76,8 +77,52 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
     other == undefined && enumExports.set(e.exportName, e.dbName);
   }
 
+  // enumExports is the map of taken export names: tables, then views, are added to it
   const exports = tableExports(schema.tables, collector, enumExports);
+  const viewExports = new Map();
+  // every table in a relationship gets a `<export>Relations` declaration
+  const relationExports = new Set(
+    schema.relationships.flatMap(({ from, to }) => [from.table, to.table]).map((table) => `${exports.get(table)}Relations`)
+  );
+
+  for (const view of schema.views) {
+    const id = exportName(view.name);
+    // same name as an inline enum's type: already reported by collectEnums
+    const other = enumExports.has(id) ? enumExports.get(id) : relationExports.has(id) ? id : undefined;
+
+    if (other != undefined && (other != view.name || relationExports.has(id))) {
+      collector.add({
+        table: view.name,
+        line: view.line,
+        message: `View name '${other}' and '${view.name}' both become '${id}' in generated code`,
+      });
+    }
+
+    enumExports.set(id, view.name);
+    viewExports.set(view.name, id);
+  }
+
   enums.length && dialect.enumBuilder && builders.add(dialect.enumBuilder);
+
+  /**
+   * The column builder call of a table or view column, or null after a
+   * reported problem.
+   *
+   * @param {import("../types").Column} column
+   * @param {import("../types").Table} table
+   */
+  const columnCall = (column, table) => {
+    const location = { table: table.name, column: column.name, line: column.line };
+    const enumDef = findEnum(enums, table, column);
+    const result = !enumDef
+      ? dialect.columnCall(column, location, collector, table)
+      : dialect.enumColumnCall
+        ? dialect.enumColumnCall(enumDef, column, location, collector, table)
+        : { builders: [], text: `${enumDef.exportName}(${JSON.stringify(column.name)})` };
+
+    result && result.builders.forEach((builder) => builders.add(builder));
+    return result;
+  };
 
   // references in a cycle get a typed callback: TypeScript cannot infer those tables
   const isCyclic = leadsBack(schema.relationships);
@@ -93,19 +138,12 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
     ];
 
     for (const column of table.columns) {
-      const location = { table: table.name, column: column.name, line: column.line };
-      const enumDef = findEnum(enums, table, column);
-      const result = !enumDef
-        ? dialect.columnCall(column, location, collector, table)
-        : dialect.enumColumnCall
-          ? dialect.enumColumnCall(enumDef, column, location, collector, table)
-          : { builders: [], text: `${enumDef.exportName}(${JSON.stringify(column.name)})` };
+      const result = columnCall(column, table);
 
       if (!result) {
         continue;
       }
 
-      result.builders.forEach((builder) => builders.add(builder));
       let call = result.text;
 
       if (pkColumns.length == 1 && column.primaryKey) {
@@ -208,6 +246,42 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
     return lines.join("\n");
   });
 
+  const viewBlocks = schema.views.map((view) => {
+    const builder = view.materialized ? dialect.materializedViewBuilder : dialect.viewBuilder;
+
+    if (!builder) {
+      collector.add({
+        table: view.name,
+        line: view.line,
+        message: `Materialized views are not supported on ${dialect.label || dialect.id}`,
+      });
+      return "";
+    }
+
+    // a view stands in for the table: it has columns, a name and a line
+    const owner = /** @type {import("../types").Table} */ ({ ...view, indexes: [], checks: [] });
+    const lines = [
+      ...jsDoc(view.comment, ""),
+      `export const ${viewExports.get(view.name)} = ${builder}(${JSON.stringify(view.name)}, {`,
+    ];
+
+    for (const column of view.columns) {
+      const result = columnCall(column, owner);
+
+      if (!result) {
+        continue;
+      }
+
+      const call = column.allowNull === false ? `${result.text}.notNull()` : result.text;
+      lines.push(...jsDoc(column.comment, "  "), `  ${propertyKey(column.name)}: ${call},`);
+    }
+
+    builders.add(builder);
+    ormImports.add("sql");
+    lines.push(`}).as(sql\`${templateText(view.query)}\`);`);
+    return lines.join("\n");
+  });
+
   const relations = buildRelations(schema, exports, collector);
   relations.length && ormImports.add("relations");
 
@@ -223,6 +297,7 @@ module.exports = function generateSchema(dbmlText, opts = {}) {
     `// Generated by dbml2drizzle from ${sourceName}. Do not edit by hand.\n${imports.join("\n")}`,
     enums.length && enums.map(dialect.enumDeclaration).join("\n"),
     ...tableBlocks,
+    ...viewBlocks,
     ...relations,
   ].filter(Boolean);
 

@@ -1,4 +1,4 @@
-const BLOCK_TYPES = ["Table", "Enum", "Project", "TableGroup", "Ref", "indexes", "checks", "Note"];
+const BLOCK_TYPES = ["Table", "Enum", "View", "Project", "TableGroup", "Ref", "indexes", "checks", "Note"];
 
 function unquote(name) {
   return name.replace(/^"(.*)"$/, "$1");
@@ -40,6 +40,11 @@ module.exports = function parseDefinitionType(block, collector) {
 
   if (type == "Table" && !name) {
     collector.add({ message: "Table is missing its name", line: block.line });
+    return null;
+  }
+
+  if (type == "View" && !name) {
+    collector.add({ message: "View is missing its name", line: block.line });
     return null;
   }
 

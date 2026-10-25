@@ -11,8 +11,10 @@ const scanText = require("./scan-line");
  * in `topLevel`.
  */
 /**
- * Joins the lines of a '''multi-line string''' into the line that opens it,
- * so the string reaches the parsers as one line.
+ * Joins the lines of a '''multi-line string''' or a multi-line `backtick
+ * expression` into the line that opens it, so the string reaches the parsers
+ * as one line. A joined line is marked `backtick` when a backtick expression
+ * spans its lines.
  */
 function joinMultiLineStrings(scanned) {
   const lines = [];
@@ -27,8 +29,10 @@ function joinMultiLineStrings(scanned) {
 
     const parts = [first.raw];
     let last = first;
+    let backtick = false;
 
     while (last.continues && i + 1 < scanned.length) {
+      backtick = backtick || last.backtick;
       last = scanned[++i];
       parts.push(last.raw);
     }
@@ -42,14 +46,19 @@ function joinMultiLineStrings(scanned) {
       commentIndex: -1,
       opens: first.opens + last.opens,
       closes: first.closes + last.closes,
+      backtick,
     });
   }
 
   return lines;
 }
 
+const SPAN_MESSAGE = "Backtick expressions may span lines only in a View's as: query";
+
 module.exports = function grouping(text, collector) {
-  const lines = joinMultiLineStrings(scanText(text));
+  const scannedLines = scanText(text);
+  const tail = scannedLines[scannedLines.length - 1];
+  const lines = joinMultiLineStrings(scannedLines);
   const root = { header: null, items: [], blocks: [] };
   const stack = [root];
   const current = () => stack[stack.length - 1];
@@ -60,12 +69,21 @@ module.exports = function grouping(text, collector) {
     commentIndex: scanned.commentIndex,
   });
 
+  // a backtick expression still open at the end of the text: the last joined line
+  const unclosed = tail && tail.continues && tail.backtick ? lines[lines.length - 1] : null;
+
+  // the documentation copy rewrites other lines one physical line at a time
+  // (specs/012 research R3)
+  const inViewQuery = (code) => /^view\b/i.test(current().header || "") && /^as\s*:/i.test(code);
+
   for (const scanned of lines) {
     const { code, line, raw } = scanned;
 
     if (!code) {
       continue;
     }
+
+    scanned.backtick && scanned != unclosed && !inViewQuery(code) && collector.add({ message: SPAN_MESSAGE, line });
 
     const oneLiner = code.match(/^([^{]*)\{(.*)\}$/s);
 
@@ -74,6 +92,7 @@ module.exports = function grouping(text, collector) {
         header: code.substring(0, code.length - 1).trim(),
         line,
         raw,
+        commentIndex: scanned.commentIndex,
         items: [],
         blocks: [],
       };
@@ -100,6 +119,8 @@ module.exports = function grouping(text, collector) {
       current().items.push(item(scanned, code));
     }
   }
+
+  unclosed && collector.add({ message: "Backtick expression is missing its closing `", line: tail.opensAt });
 
   for (const open of stack.slice(1)) {
     collector.add({
